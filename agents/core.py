@@ -414,9 +414,20 @@ def generate_attack_paths(
         path_id += 1
     
     # ==========================================================================
-    # PATH 3: Supply Chain / Dependency Attack
+    # PATH 3: Architecture-Specific Attack Path
+    # Detect architecture type and generate appropriate attack
     # ==========================================================================
-    if len(architecture.components) >= 3:
+    
+    # Detect architecture type based on components
+    component_names_lower = [c.name.lower() for c in architecture.components]
+    all_names = " ".join(component_names_lower)
+    
+    is_kubernetes = any(x in all_names for x in ['kubernetes', 'k8s', 'openshift', 'pod', 'container', 'helm', 'service mesh'])
+    is_aws_ec2 = any(x in all_names for x in ['ec2', 'auto scaling', 'ebs', 'elastic load'])
+    is_serverless = any(x in all_names for x in ['lambda', 'cloud function', 'azure function', 'serverless'])
+    
+    if is_kubernetes and not is_aws_ec2:
+        # Kubernetes/Container-based attack path
         steps = []
         referenced_threats = []
         
@@ -424,9 +435,9 @@ def generate_attack_paths(
         
         steps.append(AttackPathStep(
             step_number=1,
-            action="Compromise upstream dependency in container registry or package repository (npm, PyPI, Docker Hub)",
+            action="Compromise upstream dependency in container registry or package repository",
             target_component="Container Registry / Package Manager",
-            technique="T1195.002 - Supply Chain Compromise: Compromise Software Supply Chain",
+            technique="T1195.002 - Supply Chain Compromise",
             outcome="Inject malicious code into trusted dependency"
         ))
         
@@ -448,18 +459,10 @@ def generate_attack_paths(
                 outcome="Execute arbitrary code within trusted service"
             ))
             referenced_threats.append(target_threat.threat_id)
-        else:
-            steps.append(AttackPathStep(
-                step_number=3,
-                action="Backdoor activates and establishes command-and-control channel",
-                target_component="Application Pod",
-                technique="T1059 - Command and Scripting Interpreter",
-                outcome="Remote access to internal network"
-            ))
         
         steps.append(AttackPathStep(
             step_number=4,
-            action="Pivot from compromised pod to access service mesh, secrets, and connected databases",
+            action="Pivot from compromised pod to access service mesh, secrets, and databases",
             target_component="Service Mesh / Secrets",
             technique="T1552.007 - Unsecured Credentials: Container API",
             outcome="Access Kubernetes secrets, service account tokens"
@@ -467,15 +470,140 @@ def generate_attack_paths(
         
         attack_paths.append(AttackPath(
             path_id=f"AP-{path_id:02d}",
-            name="Supply Chain Compromise",
-            description="Attacker compromises software supply chain (container images, packages, or CI/CD pipeline) to inject malicious code that executes within trusted production environment.",
-            impact="Silent compromise of production systems with legitimate-appearing workloads. Difficult to detect. Can lead to data theft, cryptomining, or further lateral movement.",
+            name="Supply Chain Compromise (Container)",
+            description="Attacker compromises container supply chain to inject malicious code that executes within the Kubernetes cluster.",
+            impact="Silent compromise of production pods. Can lead to data theft, cryptomining, or cluster takeover.",
             likelihood="Low",
             steps=steps,
             referenced_threats=referenced_threats,
             referenced_cves=[]
         ))
         path_id += 1
+        
+    elif is_aws_ec2:
+        # AWS EC2-based attack path - IMDS/IAM credential theft
+        steps = []
+        referenced_threats = []
+        
+        # Find IMDS or privilege escalation threats
+        priv_threats = [t for t in threats if t.category == "Elevation of Privilege"]
+        info_threats = [t for t in threats if t.category == "Information Disclosure"]
+        
+        # Find EC2 and related components
+        ec2_comp = next((c.name for c in architecture.components if 'ec2' in c.name.lower()), "EC2 Instance")
+        s3_comp = next((c.name for c in architecture.components if 's3' in c.name.lower()), None)
+        
+        steps.append(AttackPathStep(
+            step_number=1,
+            action="Exploit web application vulnerability (SSRF, RCE, or injection) on EC2 instance",
+            target_component=ec2_comp,
+            technique="T1190 - Exploit Public-Facing Application",
+            outcome="Gain code execution or SSRF capability on EC2 instance"
+        ))
+        
+        if priv_threats:
+            imds_threat = priv_threats[0]
+            steps.append(AttackPathStep(
+                step_number=2,
+                action=f"Query IMDS to steal IAM credentials: {imds_threat.description[:50]}...",
+                target_component=ec2_comp,
+                technique="T1552.005 - Unsecured Credentials: Cloud Instance Metadata API",
+                outcome="Obtain temporary IAM credentials from instance role"
+            ))
+            referenced_threats.append(imds_threat.threat_id)
+        else:
+            steps.append(AttackPathStep(
+                step_number=2,
+                action="Query EC2 Instance Metadata Service (IMDS) at 169.254.169.254",
+                target_component=ec2_comp,
+                technique="T1552.005 - Unsecured Credentials: Cloud Instance Metadata API",
+                outcome="Obtain temporary IAM credentials from instance role"
+            ))
+        
+        steps.append(AttackPathStep(
+            step_number=3,
+            action="Use stolen IAM credentials to enumerate and access AWS resources",
+            target_component="AWS IAM / AWS APIs",
+            technique="T1087.004 - Account Discovery: Cloud Account",
+            outcome="Map accessible S3 buckets, RDS instances, secrets"
+        ))
+        
+        if s3_comp:
+            steps.append(AttackPathStep(
+                step_number=4,
+                action=f"Access {s3_comp} using stolen credentials to exfiltrate data",
+                target_component=s3_comp,
+                technique="T1530 - Data from Cloud Storage Object",
+                outcome="Download sensitive data, logs, or backups from S3"
+            ))
+        else:
+            steps.append(AttackPathStep(
+                step_number=4,
+                action="Access AWS resources (S3, RDS, Secrets Manager) using stolen credentials",
+                target_component="AWS Cloud Resources",
+                technique="T1530 - Data from Cloud Storage Object",
+                outcome="Exfiltrate sensitive data from cloud storage"
+            ))
+        
+        attack_paths.append(AttackPath(
+            path_id=f"AP-{path_id:02d}",
+            name="IMDS Credential Theft to Cloud Resource Access",
+            description=f"Attacker exploits application vulnerability on {ec2_comp} to query Instance Metadata Service and steal IAM credentials, then uses those credentials to access other AWS resources.",
+            impact="Full access to AWS resources accessible by the EC2 instance role. Data exfiltration, resource manipulation, or privilege escalation within AWS account.",
+            likelihood="Medium" if priv_threats else "Low",
+            steps=steps,
+            referenced_threats=referenced_threats,
+            referenced_cves=[]
+        ))
+        path_id += 1
+        
+    elif is_serverless:
+        # Serverless attack path
+        steps = []
+        referenced_threats = []
+        
+        lambda_comp = next((c.name for c in architecture.components if 'lambda' in c.name.lower() or 'function' in c.name.lower()), "Lambda Function")
+        
+        steps.append(AttackPathStep(
+            step_number=1,
+            action="Inject malicious payload via API Gateway or event source",
+            target_component=lambda_comp,
+            technique="T1190 - Exploit Public-Facing Application",
+            outcome="Achieve code execution within Lambda function"
+        ))
+        
+        steps.append(AttackPathStep(
+            step_number=2,
+            action="Access environment variables containing secrets or API keys",
+            target_component=lambda_comp,
+            technique="T1552.001 - Unsecured Credentials: Credentials In Files",
+            outcome="Obtain database credentials, API keys, or tokens"
+        ))
+        
+        steps.append(AttackPathStep(
+            step_number=3,
+            action="Use Lambda execution role to access connected AWS services",
+            target_component="AWS Resources",
+            technique="T1078.004 - Valid Accounts: Cloud Accounts",
+            outcome="Access DynamoDB, S3, or other services with Lambda's permissions"
+        ))
+        
+        attack_paths.append(AttackPath(
+            path_id=f"AP-{path_id:02d}",
+            name="Serverless Function Exploitation",
+            description="Attacker exploits serverless function to steal credentials from environment and access connected AWS services.",
+            impact="Data access and potential privilege escalation within AWS account via Lambda execution role.",
+            likelihood="Low",
+            steps=steps,
+            referenced_threats=referenced_threats,
+            referenced_cves=[]
+        ))
+        path_id += 1
+    
+    # Only add generic supply chain if we have container/k8s components
+    elif len(architecture.components) >= 3 and is_kubernetes:
+        # Generic supply chain - only for container environments
+        pass  # Already handled above
     
     return attack_paths
 
@@ -489,7 +617,8 @@ def run_threat_modeling_pipeline(
     json_input: str = None,
     json_data: Dict = None,
     output_file: str = None,
-    verbose: bool = True
+    verbose: bool = True,
+    use_langgraph: bool = True
 ) -> Tuple[str, Dict[str, Any]]:
     """
     Orchestrates the Multi-Agent Threat Modeling Pipeline.
@@ -500,10 +629,40 @@ def run_threat_modeling_pipeline(
         json_data: Dict with architecture data (for programmatic use)
         output_file: Path to save Markdown report
         verbose: Whether to print progress
+        use_langgraph: Whether to use LangGraph orchestration (default: True)
+            - True: Uses LangGraph with parallel execution and checkpointing
+            - False: Uses sequential execution (legacy mode)
         
     Returns:
         Tuple of (report_markdown, pipeline_results)
     """
+    # Use LangGraph orchestration if enabled
+    if use_langgraph:
+        try:
+            from agents.graph import build_pipeline_graph, run_pipeline_graph
+            
+            if verbose:
+                print("\n[INFO] Using LangGraph orchestration (parallel execution enabled)")
+            
+            graph = build_pipeline_graph()
+            return run_pipeline_graph(
+                graph=graph,
+                image_path=image_path,
+                json_input=json_input,
+                json_data=json_data,
+                output_file=output_file,
+                verbose=verbose
+            )
+        except ImportError as e:
+            logger.warning(f"LangGraph not available, falling back to sequential execution: {e}")
+            if verbose:
+                print("\n[WARNING] LangGraph not available, using sequential execution")
+        except Exception as e:
+            logger.warning(f"LangGraph execution failed, falling back to sequential: {e}")
+            if verbose:
+                print(f"\n[WARNING] LangGraph failed ({e}), using sequential execution")
+    
+    # Sequential execution (legacy mode)
     timer = PipelineTimer()
     timer.start()
     
@@ -829,3 +988,22 @@ __all__ = [
     "PipelineTimer",
     "generate_attack_paths",
 ]
+
+
+# =============================================================================
+# Convenience function for LangGraph direct access
+# =============================================================================
+
+def get_pipeline_graph():
+    """
+    Get a compiled LangGraph pipeline for advanced usage.
+    
+    Returns:
+        Compiled StateGraph with checkpointing enabled
+        
+    Example:
+        graph = get_pipeline_graph()
+        report, results = run_pipeline_graph(graph, json_input="arch.json")
+    """
+    from agents.graph import build_pipeline_graph
+    return build_pipeline_graph()

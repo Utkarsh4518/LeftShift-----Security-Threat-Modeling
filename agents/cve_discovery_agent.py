@@ -5,6 +5,8 @@ This agent discovers relevant CVEs for architecture components by:
 1. Extracting product identifiers from inferred components
 2. Searching NVD and CISA KEV for vulnerabilities
 3. Enriching threats with mitigation strategies
+
+Includes caching for improved performance on repeated analyses.
 """
 
 import logging
@@ -18,6 +20,7 @@ from tools.threat_intel_api import (
     _looks_like_software_identifier,
 )
 from tools.mitigation_engine import enrich_threat_with_mitigation
+from agents.cache import get_cve_cache
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -33,11 +36,20 @@ class CVEDiscoveryAgent:
     2. Filters out generic categories
     3. Searches vulnerability databases for relevant CVEs
     4. Enriches threats with mitigation strategies
+    
+    Includes caching for CVE lookups with 24-hour TTL.
     """
     
-    def __init__(self):
-        """Initialize the CVE Discovery Agent."""
-        logger.info("CVE Discovery Agent initialized")
+    def __init__(self, use_cache: bool = True):
+        """
+        Initialize the CVE Discovery Agent.
+        
+        Args:
+            use_cache: Whether to use caching for CVE lookups (default: True)
+        """
+        self.use_cache = use_cache
+        self._cache = get_cve_cache() if use_cache else None
+        logger.info(f"CVE Discovery Agent initialized (caching: {use_cache})")
     
     def _extract_products(
         self,
@@ -132,6 +144,37 @@ class CVEDiscoveryAgent:
         logger.info(f"Filtered to {len(filtered)} concrete products")
         return filtered
     
+    def _search_product_cached(
+        self,
+        product_name: str
+    ) -> List[ThreatRecord]:
+        """
+        Search for CVEs for a product with caching.
+        
+        Args:
+            product_name: Product name to search
+            
+        Returns:
+            List of ThreatRecord objects
+        """
+        # Check cache first
+        if self._cache:
+            cached = self._cache.get(product_name)
+            if cached is not None:
+                logger.info(f"Cache HIT for product: {product_name} ({len(cached)} CVEs)")
+                return cached
+        
+        # Search NVD
+        logger.info(f"Cache MISS - searching NVD for: {product_name}")
+        results = search_vulnerabilities(None, [product_name])
+        threats = results.threats
+        
+        # Store in cache
+        if self._cache:
+            self._cache.set(product_name, threats)
+        
+        return threats
+    
     def discover_cves(
         self,
         inferred_components: List[Dict[str, Any]]
@@ -164,12 +207,23 @@ class CVEDiscoveryAgent:
             logger.warning("All products filtered out as generic")
             return []
         
-        # Step 3: Search for vulnerabilities
+        # Step 3: Search for vulnerabilities (with caching per product)
         logger.info(f"Searching CVEs for: {concrete_products}")
-        results = search_vulnerabilities(None, concrete_products)
         
-        threats = results.threats
-        logger.info(f"Found {len(threats)} CVEs from vulnerability search")
+        all_threats = []
+        cache_hits = 0
+        
+        for product in concrete_products:
+            # Use cached search
+            product_threats = self._search_product_cached(product)
+            all_threats.extend(product_threats)
+            
+            # Track cache performance
+            if self._cache and self._cache.get(product) is not None:
+                cache_hits += 1
+        
+        threats = all_threats
+        logger.info(f"Found {len(threats)} CVEs from vulnerability search (cache hits: {cache_hits}/{len(concrete_products)})")
         
         # Step 4: Deduplicate CVEs (same CVE might appear from multiple product searches)
         seen_cve_ids = set()
@@ -207,20 +261,28 @@ class CVEDiscoveryAgent:
         """
         Discover CVEs for a single product.
         
+        Uses caching for improved performance on repeated queries.
+        
         Args:
             product_name: Name of the product to search
             
         Returns:
-            List of ThreatRecord objects
+            List of ThreatRecord objects with mitigations
         """
-        # Create a simple inference structure
-        inferred = [{
-            "component_name": product_name,
-            "inferred_product_categories": [product_name],
-            "confidence": 0.95
-        }]
+        # Use cached search directly
+        threats = self._search_product_cached(product_name)
         
-        return self.discover_cves(inferred)
+        # Enrich with mitigations
+        enriched_threats = []
+        for threat in threats:
+            try:
+                enriched = enrich_threat_with_mitigation(threat)
+                enriched_threats.append(enriched)
+            except Exception as e:
+                logger.error(f"Failed to enrich {threat.cve_id} with mitigation: {e}")
+                enriched_threats.append(threat)
+        
+        return enriched_threats
     
     def get_kev_status(self, cve_id: str) -> bool:
         """

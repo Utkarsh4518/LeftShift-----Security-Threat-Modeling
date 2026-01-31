@@ -117,6 +117,15 @@ For each CVE from the input "cves" array:
 - Is Actively Exploited (CISA KEV status from input)
 - Relevance assessment and prerequisites (from input)
 
+**IF NO CVEs IN INPUT:**
+If the "cves" array is empty or not provided, write:
+"No specific CVEs were identified for this architecture. This is expected for architecture-level threat modeling where:
+- Components are identified by service type (e.g., 'EC2 Instance') rather than specific software versions
+- The analysis focuses on architectural risks (STRIDE) rather than software vulnerabilities
+- CVE discovery requires specific product names and versions (e.g., 'nginx 1.18.0')
+
+To enable CVE discovery, provide specific software versions deployed on each component."
+
 **ABSOLUTE RULES:**
 - List ONLY CVEs that exist in the input "cves" array
 - Do not add any CVE IDs not in the input

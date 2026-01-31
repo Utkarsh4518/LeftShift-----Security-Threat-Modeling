@@ -6,6 +6,7 @@ whether they represent specific software products or generic labels. For generic
 labels, it uses LLM-based inference to suggest likely technologies based on context.
 
 Uses Google Gemini for text-based reasoning tasks.
+Includes caching for improved performance on repeated analyses.
 """
 
 import json
@@ -19,6 +20,8 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
+
+from agents.cache import get_component_cache, make_cache_key
 
 # Load environment variables
 load_dotenv()
@@ -141,9 +144,26 @@ KNOWN_TECH: Set[str] = {
     "aws", "azure", "gcp", "google cloud", "digitalocean", "linode",
     "vultr", "heroku", "vercel", "netlify", "cloudflare", "fastly",
     
-    # Cloud Services - AWS
+    # Cloud Services - AWS (short names)
     "ec2", "s3", "rds", "lambda", "ecs", "eks", "fargate", "api gateway",
     "cloudfront", "route53", "elasticache", "aurora", "redshift", "athena",
+    "ebs", "elb", "alb", "nlb", "sqs", "sns", "iam", "vpc", "acm",
+    
+    # Cloud Services - AWS (full names - critical for diagram recognition)
+    "amazon ec2", "ec2 instance", "amazon s3", "s3 bucket", "amazon s3 bucket",
+    "amazon rds", "amazon route 53", "route 53", "amazon route53",
+    "elastic load balancing", "elastic load balancer", "application load balancer",
+    "network load balancer", "classic load balancer",
+    "amazon cloudfront", "amazon ebs", "ebs volume", "ebs snapshot",
+    "amazon ebs snapshot", "root volume", "data volume",
+    "auto scaling", "auto scaling group", "amazon auto scaling",
+    "amazon vpc", "amazon iam", "aws lambda", "amazon lambda",
+    "amazon dynamodb", "amazon elasticache", "amazon aurora",
+    "amazon redshift", "amazon athena", "amazon kinesis",
+    "amazon sqs", "amazon sns", "amazon eventbridge",
+    "aws waf", "amazon waf", "aws shield", "amazon cloudwatch",
+    "aws cloudtrail", "amazon cloudtrail", "aws secrets manager",
+    "aws kms", "amazon kms", "key management service",
     
     # Cloud Services - Azure
     "azure functions", "azure sql", "cosmos db", "cosmosdb", "azure blob",
@@ -378,6 +398,31 @@ def _is_all_generic_words(name: str) -> bool:
     return True
 
 
+def _is_aws_service(name: str) -> bool:
+    """
+    Check if a component name is an AWS service.
+    AWS services should always map to themselves, not be inferred as something else.
+    """
+    normalized = _normalize_name(name)
+    
+    # AWS service patterns - these should ALWAYS be recognized
+    aws_patterns = [
+        'amazon', 'aws', 'ec2', 's3', 'rds', 'lambda', 'cloudfront',
+        'route 53', 'route53', 'elastic load', 'elb', 'alb', 'nlb',
+        'ebs', 'auto scaling', 'autoscaling', 'dynamodb', 'elasticache',
+        'sqs', 'sns', 'kinesis', 'cloudwatch', 'cloudtrail', 'iam',
+        'vpc', 'kms', 'waf', 'shield', 'secrets manager', 'aurora',
+        'redshift', 'athena', 'glue', 'emr', 'eks', 'ecs', 'fargate',
+        'api gateway', 'cognito', 'eventbridge'
+    ]
+    
+    for pattern in aws_patterns:
+        if pattern in normalized:
+            return True
+    
+    return False
+
+
 def _looks_like_software_identifier(name: str) -> bool:
     """
     Determine if a component name looks like a specific software product.
@@ -393,6 +438,10 @@ def _looks_like_software_identifier(name: str) -> bool:
         return False
     
     normalized = _normalize_name(name)
+    
+    # AWS services are ALWAYS recognized as specific software
+    if _is_aws_service(name):
+        return True
     
     # Check if it's a known generic label
     if normalized in GENERIC_LABELS:
@@ -465,6 +514,19 @@ INFERENCE_SYSTEM_PROMPT = """You are a software architecture expert. Your job is
 
 ## CRITICAL RULES - READ CAREFULLY:
 
+### RULE 0: AWS/CLOUD SERVICES MUST MAP TO THEMSELVES
+This is the most important rule. If a component IS an AWS/Azure/GCP service, return that service name:
+- "EC2 Instance" -> suggested_product: "EC2 Instance" (NOT CloudFront, NOT anything else)
+- "Auto Scaling group" -> suggested_product: "Auto Scaling group" (NOT Route 53)
+- "Elastic Load Balancing" -> suggested_product: "Elastic Load Balancing"
+- "Amazon S3 Bucket" -> suggested_product: "Amazon S3 Bucket"
+- "Amazon Route 53" -> suggested_product: "Amazon Route 53"
+- "CloudFront" -> suggested_product: "CloudFront"
+- "Amazon EBS Snapshot" -> suggested_product: "Amazon EBS Snapshot"
+- "Root Volume" -> suggested_product: "EBS Volume" (it's an EBS volume)
+- "Data Volume" -> suggested_product: "EBS Volume" (it's an EBS volume)
+DO NOT infer a DIFFERENT AWS service. The component IS what it says it is.
+
 ### RULE 1: Match the component itself, NOT its connections
 - "Web Browser" = the user's browser (Chrome, Firefox) - NOT a backend database
 - "Mobile App" = a mobile application (iOS/Android) - NOT a server
@@ -491,13 +553,15 @@ These should have suggested_product = "Generic" (they are not specific products)
 - "Auth Service" -> Generic (unless Keycloak/Auth0/etc specified)
 
 ### RULE 5: NEVER infer unrelated products
+WRONG: "EC2 Instance" -> "CloudFront" (EC2 is EC2, not CloudFront)
+WRONG: "Auto Scaling group" -> "Route 53" (Auto Scaling is not DNS)
+WRONG: "Root Volume" -> "Elastic Load Balancing" (Volume is storage, not networking)
 WRONG: "Orders Service" -> "Google Analytics" (analytics is unrelated)
 WRONG: "Web Browser" -> "Elasticsearch" (browser is not a search engine)
-WRONG: "Public Route" -> "MySQL" (ingress is not a database)
 
 ### RULE 6: Confidence calibration
-- 1.0: Name explicitly contains the product (e.g., "MySQL Database")
-- 0.95: Very clear indicator (e.g., "Redis Cache")
+- 1.0: Name explicitly contains the product (e.g., "MySQL Database", "EC2 Instance")
+- 0.95: Very clear indicator (e.g., "Redis Cache", "Auto Scaling group")
 - 0.7-0.8: Strong contextual inference
 - 0.5-0.6: Reasonable guess
 - Below 0.5: Use "Generic"
@@ -824,17 +888,28 @@ Return results as a JSON object matching the BatchInferenceResult schema."""
     
     def analyze_architecture_components(
         self,
-        components: List[Dict[str, str]]
+        components: List[Dict[str, str]],
+        use_cache: bool = True
     ) -> List[Dict[str, Any]]:
         """
         Analyze components from an ArchitectureSchema.
         
         Args:
             components: List of component dicts with 'name' and 'type' fields
+            use_cache: Whether to use caching for repeated analyses (default: True)
             
         Returns:
             Enhanced component list with inference results
         """
+        # Check cache first
+        if use_cache:
+            cache = get_component_cache()
+            cache_key = make_cache_key(components)
+            cached_result = cache.get(cache_key)
+            if cached_result is not None:
+                logger.info(f"Using cached component inference ({len(cached_result)} components)")
+                return cached_result
+        
         labels = [c.get("name", "") for c in components]
         inferences = self.infer_components(labels)
         
@@ -845,6 +920,11 @@ Return results as a JSON object matching the BatchInferenceResult schema."""
                 **comp,
                 **inference
             })
+        
+        # Store in cache
+        if use_cache:
+            cache.set(cache_key, enhanced)
+            logger.info(f"Cached component inference for {len(enhanced)} components")
         
         return enhanced
 
