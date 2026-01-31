@@ -1,0 +1,137 @@
+{
+  "project_name": "E-Commerce Platform",
+  "description": "A three-tier web application with user authentication, product catalog, and payment processing. Includes external payment gateway integration.",
+  "components": [
+    {
+      "name": "Web Browser",
+      "type": "Client"
+    },
+    {
+      "name": "CDN (CloudFront)",
+      "type": "Content Delivery Network"
+    },
+    {
+      "name": "Load Balancer",
+      "type": "Load Balancer"
+    },
+    {
+      "name": "Web Server (Nginx)",
+      "type": "Web Server"
+    },
+    {
+      "name": "API Gateway",
+      "type": "API Gateway"
+    },
+    {
+      "name": "Auth Service",
+      "type": "Microservice"
+    },
+    {
+      "name": "Product Service",
+      "type": "Microservice"
+    },
+    {
+      "name": "Order Service",
+      "type": "Microservice"
+    },
+    {
+      "name": "Payment Service",
+      "type": "Microservice"
+    },
+    {
+      "name": "PostgreSQL Database",
+      "type": "Database"
+    },
+    {
+      "name": "Redis Cache",
+      "type": "Cache"
+    },
+    {
+      "name": "RabbitMQ",
+      "type": "Message Queue"
+    },
+    {
+      "name": "Stripe API",
+      "type": "External Service"
+    }
+  ],
+  "data_flows": [
+    {
+      "source": "Web Browser",
+      "destination": "CDN (CloudFront)",
+      "protocol": "HTTPS/443"
+    },
+    {
+      "source": "CDN (CloudFront)",
+      "destination": "Load Balancer",
+      "protocol": "HTTPS/443"
+    },
+    {
+      "source": "Load Balancer",
+      "destination": "Web Server (Nginx)",
+      "protocol": "HTTP/80"
+    },
+    {
+      "source": "Web Server (Nginx)",
+      "destination": "API Gateway",
+      "protocol": "HTTP/8080"
+    },
+    {
+      "source": "API Gateway",
+      "destination": "Auth Service",
+      "protocol": "gRPC/50051"
+    },
+    {
+      "source": "API Gateway",
+      "destination": "Product Service",
+      "protocol": "gRPC/50052"
+    },
+    {
+      "source": "API Gateway",
+      "destination": "Order Service",
+      "protocol": "gRPC/50053"
+    },
+    {
+      "source": "Order Service",
+      "destination": "Payment Service",
+      "protocol": "gRPC/50054"
+    },
+    {
+      "source": "Auth Service",
+      "destination": "PostgreSQL Database",
+      "protocol": "TCP/5432"
+    },
+    {
+      "source": "Product Service",
+      "destination": "PostgreSQL Database",
+      "protocol": "TCP/5432"
+    },
+    {
+      "source": "Order Service",
+      "destination": "PostgreSQL Database",
+      "protocol": "TCP/5432"
+    },
+    {
+      "source": "Product Service",
+      "destination": "Redis Cache",
+      "protocol": "TCP/6379"
+    },
+    {
+      "source": "Order Service",
+      "destination": "RabbitMQ",
+      "protocol": "AMQP/5672"
+    },
+    {
+      "source": "Payment Service",
+      "destination": "Stripe API",
+      "protocol": "HTTPS/443"
+    }
+  ],
+  "trust_boundaries": [
+    "Internet",
+    "DMZ",
+    "Application Zone",
+    "Data Zone",
+    "External Services"
+  ]
+}
