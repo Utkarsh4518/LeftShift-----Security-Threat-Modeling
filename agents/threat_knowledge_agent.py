@@ -3,6 +3,8 @@ Threat Knowledge Agent for Left<<Shift Threat Modeling System.
 
 This agent performs STRIDE-based threat analysis on architecture components,
 generates detailed threats with CWE mappings, and identifies architectural weaknesses.
+
+Uses OpenAI GPT-5.2 for STRIDE analysis and threat generation.
 """
 
 import json
@@ -12,8 +14,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+from openai import OpenAI
 from pydantic import BaseModel, Field
 
 from tools.models import (
@@ -35,8 +36,8 @@ logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 BASE_DELAY = 2.0
-PRIMARY_MODEL = "gemini-2.0-flash"
-FALLBACK_MODEL = "gemini-2.0-flash"
+PRIMARY_MODEL = "gpt-5.2"
+FALLBACK_MODEL = "gpt-5"
 
 # =============================================================================
 # STRIDE Analysis System Instruction
@@ -315,6 +316,8 @@ class ThreatKnowledgeAgent:
     2. Generates detailed, technology-specific threats
     3. Validates and corrects CWE mappings
     4. Identifies architectural weaknesses
+    
+    Uses OpenAI GPT-5.2 for threat generation.
     """
     
     def __init__(self, model_name: str = PRIMARY_MODEL):
@@ -322,24 +325,24 @@ class ThreatKnowledgeAgent:
         Initialize the Threat Knowledge Agent.
         
         Args:
-            model_name: Gemini model to use for generation
+            model_name: OpenAI model to use for generation
         """
         self.model_name = model_name
-        self.client: Optional[genai.Client] = None
+        self.client: Optional[OpenAI] = None
         self._initialize_client()
     
     def _initialize_client(self) -> None:
-        """Initialize Gemini client if API key is available."""
-        api_key = os.getenv("GEMINI_API_KEY")
-        if api_key and api_key != "your_gemini_api_key_here":
+        """Initialize OpenAI client if API key is available."""
+        api_key = os.getenv("OPENAI_API_KEY")
+        if api_key and api_key != "your_openai_api_key_here":
             try:
-                self.client = genai.Client(api_key=api_key)
-                logger.info(f"Gemini client initialized with model: {self.model_name}")
+                self.client = OpenAI(api_key=api_key)
+                logger.info(f"OpenAI client initialized with model: {self.model_name}")
             except Exception as e:
-                logger.warning(f"Failed to initialize Gemini client: {e}")
+                logger.warning(f"Failed to initialize OpenAI client: {e}")
                 self.client = None
         else:
-            logger.warning("GEMINI_API_KEY not configured - threat generation disabled")
+            logger.warning("OPENAI_API_KEY not configured - threat generation disabled")
             self.client = None
     
     def _call_llm_with_retry(
@@ -356,7 +359,7 @@ class ThreatKnowledgeAgent:
         Args:
             prompt: User prompt
             system_instruction: System instruction
-            response_schema: JSON schema for structured output
+            response_schema: JSON schema for structured output (used for guidance)
             model: Model to use (defaults to self.model_name)
             attempt: Current attempt number
             
@@ -372,23 +375,20 @@ class ThreatKnowledgeAgent:
         try:
             logger.info(f"LLM call attempt {attempt}/{MAX_RETRIES} using {model}")
             
-            response = self.client.models.generate_content(
+            # Add schema guidance to system instruction
+            schema_guidance = f"\n\nYou MUST respond with valid JSON matching this schema:\n{json.dumps(response_schema, indent=2)}"
+            
+            response = self.client.chat.completions.create(
                 model=model,
-                contents=[
-                    types.Content(
-                        role="user",
-                        parts=[types.Part.from_text(text=prompt)]
-                    )
+                messages=[
+                    {"role": "system", "content": system_instruction + schema_guidance},
+                    {"role": "user", "content": prompt}
                 ],
-                config=types.GenerateContentConfig(
-                    temperature=0.3,
-                    system_instruction=system_instruction,
-                    response_mime_type="application/json",
-                    response_schema=response_schema
-                )
+                temperature=0.3,
+                response_format={"type": "json_object"}
             )
             
-            return response.text
+            return response.choices[0].message.content
             
         except Exception as e:
             logger.warning(f"LLM call failed (attempt {attempt}): {e}")

@@ -235,7 +235,7 @@ def _call_gemini_vision(
     
     # Call the model
     response = client.models.generate_content(
-        model="gemini-2.0-flash",  # Using latest multimodal model
+        model="gemini-3-pro-image-preview",  # Gemini 3 Pro Image for vision/diagram analysis
         contents=contents,
         config=generation_config
     )

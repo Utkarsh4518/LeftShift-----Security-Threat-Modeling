@@ -7,6 +7,8 @@ enriching relevant ones with context-specific information.
 
 IMPORTANT: This agent does NOT generate or hallucinate CVEs.
 It only analyzes CVEs that were discovered from real vulnerability databases.
+
+Uses OpenAI GPT-5.2 for relevance analysis.
 """
 
 import json
@@ -16,8 +18,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+from openai import OpenAI
 from pydantic import BaseModel, Field
 
 from tools.models import (
@@ -39,7 +40,8 @@ logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 BASE_DELAY = 2.0
-PRIMARY_MODEL = "gemini-2.0-flash"
+PRIMARY_MODEL = "gpt-5.2"
+FALLBACK_MODEL = "gpt-5"
 
 # =============================================================================
 # Relevance Analysis System Instruction
@@ -215,6 +217,8 @@ class ThreatRelevanceAgent:
     
     IMPORTANT: This agent does NOT generate CVEs - it only analyzes
     CVEs that were discovered from real vulnerability databases.
+    
+    Uses OpenAI GPT-5.2 for relevance analysis.
     """
     
     def __init__(self, model_name: str = PRIMARY_MODEL):
@@ -222,55 +226,56 @@ class ThreatRelevanceAgent:
         Initialize the Threat Relevance Agent.
         
         Args:
-            model_name: Gemini model to use for analysis
+            model_name: OpenAI model to use for analysis
         """
         self.model_name = model_name
-        self.client: Optional[genai.Client] = None
+        self.client: Optional[OpenAI] = None
         self._initialize_client()
     
     def _initialize_client(self) -> None:
-        """Initialize Gemini client if API key is available."""
-        api_key = os.getenv("GEMINI_API_KEY")
-        if api_key and api_key != "your_gemini_api_key_here":
+        """Initialize OpenAI client if API key is available."""
+        api_key = os.getenv("OPENAI_API_KEY")
+        if api_key and api_key != "your_openai_api_key_here":
             try:
-                self.client = genai.Client(api_key=api_key)
-                logger.info(f"Gemini client initialized for relevance analysis")
+                self.client = OpenAI(api_key=api_key)
+                logger.info(f"OpenAI client initialized for relevance analysis")
             except Exception as e:
-                logger.warning(f"Failed to initialize Gemini client: {e}")
+                logger.warning(f"Failed to initialize OpenAI client: {e}")
                 self.client = None
         else:
-            logger.warning("GEMINI_API_KEY not configured")
+            logger.warning("OPENAI_API_KEY not configured")
             self.client = None
     
     def _call_llm_with_retry(
         self,
         prompt: str,
-        attempt: int = 1
+        attempt: int = 1,
+        model: Optional[str] = None
     ) -> Optional[str]:
-        """Call LLM with retry logic."""
+        """Call LLM with retry logic and fallback model support."""
         if not self.client:
             return None
         
+        model = model or self.model_name
+        
         try:
-            logger.info(f"LLM call attempt {attempt}/{MAX_RETRIES}")
+            logger.info(f"LLM call attempt {attempt}/{MAX_RETRIES} using {model}")
             
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=[
-                    types.Content(
-                        role="user",
-                        parts=[types.Part.from_text(text=prompt)]
-                    )
+            # Add schema guidance to system instruction
+            schema = _create_relevance_schema()
+            schema_guidance = f"\n\nYou MUST respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2)}"
+            
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": RELEVANCE_SYSTEM_INSTRUCTION + schema_guidance},
+                    {"role": "user", "content": prompt}
                 ],
-                config=types.GenerateContentConfig(
-                    temperature=0.2,
-                    system_instruction=RELEVANCE_SYSTEM_INSTRUCTION,
-                    response_mime_type="application/json",
-                    response_schema=_create_relevance_schema()
-                )
+                temperature=0.2,
+                response_format={"type": "json_object"}
             )
             
-            return response.text
+            return response.choices[0].message.content
             
         except Exception as e:
             logger.warning(f"LLM call failed (attempt {attempt}): {e}")
@@ -278,7 +283,9 @@ class ThreatRelevanceAgent:
             if attempt < MAX_RETRIES:
                 delay = BASE_DELAY * (2 ** (attempt - 1))
                 time.sleep(delay)
-                return self._call_llm_with_retry(prompt, attempt + 1)
+                # Use fallback model on last retry attempt
+                next_model = FALLBACK_MODEL if attempt == MAX_RETRIES - 1 else model
+                return self._call_llm_with_retry(prompt, attempt + 1, next_model)
             
             return None
     
