@@ -50,24 +50,31 @@ FALLBACK_MODEL = "gemini-2.5-pro"
 
 REPORT_SYSTEM_INSTRUCTION = """You are a Security Report Synthesizer generating threat modeling reports.
 
-## CRITICAL RULES - READ CAREFULLY:
+## CRITICAL RULES - READ CAREFULLY (VIOLATION = REPORT FAILURE):
 
 1. **NEVER INVENT OR HALLUCINATE CONTENT**
-   - Only use data provided in the input
+   - Only use data provided in the input JSON
    - If data is missing, state "No data provided" or "N/A"
    - Never create fake CVE IDs, threat IDs, or component names
    - Every ID, name, and value must come from the input data
 
-2. **DATA INTEGRITY**
-   - CVE IDs must exactly match those in the input
-   - Threat IDs must exactly match those in the input
-   - Component names must exactly match those in the input
-   - Do not add threats, CVEs, or components not in the input
+2. **DATA INTEGRITY FOR CVEs**
+   - CVE IDs must EXACTLY match those in the input "cves" array
+   - You may ONLY reference CVE IDs that appear in the input
+   - If a threat has no related_cve_id field, DO NOT associate it with any CVE
+   - STRIDE threats (T-001 to T-015 typically) are theoretical - they have NO CVE mappings unless explicitly set
+   - Only threats PROMOTED from CVEs (which have related_cve_id set) should appear in Threat-CVE matrix
 
-3. **CONSISTENCY**
+3. **DATA INTEGRITY FOR THREATS**
+   - Threat IDs must exactly match those in the input
+   - Do not add or remove any threats
+   - Do not modify threat descriptions or severities
+
+4. **CONSISTENCY**
    - Use the exact same IDs throughout the report
    - No contradictions between sections
    - Counts must match the actual input data
+   - If input has 28 CVEs, report must reference exactly 28 CVEs (no more, no less)
 
 ## REPORT STRUCTURE (12 Sections):
 
@@ -103,20 +110,30 @@ Include ALL threats from input - do not add or remove any.
 Include ALL weaknesses from input.
 
 ### 6. CVE DISCOVERY RESULTS
-For each CVE from input:
-- CVE ID, Severity, CVSS Score
-- Affected Products
-- Summary (from input)
-- Is Actively Exploited (CISA KEV status)
-- Relevance to architecture
-- Prerequisites for exploitation
+For each CVE from the input "cves" array:
+- CVE ID (MUST be from input), Severity, CVSS Score
+- Affected Products (from input data)
+- Summary (from input data - do not rewrite)
+- Is Actively Exploited (CISA KEV status from input)
+- Relevance assessment and prerequisites (from input)
 
-**NEVER invent CVE IDs - only use those provided in input**
+**ABSOLUTE RULES:**
+- List ONLY CVEs that exist in the input "cves" array
+- Do not add any CVE IDs not in the input
+- Do not remove any CVEs from the input
+- The CVE count in this section must match input exactly
 
 ### 7. THREAT ↔ CVE CORRELATION MATRIX
 | Threat ID | Related CVE | Relationship Type | Notes |
 
-Only show relationships that exist in the data (related_cve_id field).
+**ABSOLUTE RULES FOR THIS SECTION - VIOLATION = FAILURE:**
+- ONLY include rows where the threat object has a non-null, non-empty "related_cve_id" field
+- The CVE ID in this table MUST exactly match a CVE ID from the input CVE list
+- If threat.related_cve_id is null, empty, or missing → DO NOT create a row for that threat
+- NEVER infer, guess, or conceptually map CVEs to threats based on descriptions
+- NEVER use CVE IDs that do not appear in the input data
+- If zero valid mappings exist, write: "No direct Threat-CVE correlations exist. STRIDE threats are architecture-derived, not CVE-derived."
+- Relationship Type must be: "CVE Promoted to Threat" for threats created from CVEs
 
 ### 8. ATTACK PATH SIMULATIONS
 For each attack path in input:
@@ -352,13 +369,49 @@ class ReportSynthesizerAgent:
         # Serialize data
         data_json = serialize_for_report(report_data)
         
+        # Extract valid CVE IDs from input
+        valid_cve_ids = []
+        for cve in report_data.get("cves", []):
+            if isinstance(cve, dict):
+                cve_id = cve.get("cve_id", "")
+            elif hasattr(cve, "cve_id"):
+                cve_id = cve.cve_id
+            else:
+                continue
+            if cve_id:
+                valid_cve_ids.append(cve_id)
+        
+        # Extract valid threat-CVE mappings
+        threat_cve_mappings = []
+        for threat in report_data.get("threats", []):
+            if isinstance(threat, dict):
+                threat_id = threat.get("threat_id", "")
+                related_cve = threat.get("related_cve_id")
+            elif hasattr(threat, "threat_id"):
+                threat_id = threat.threat_id
+                related_cve = getattr(threat, "related_cve_id", None)
+            else:
+                continue
+            
+            if threat_id and related_cve and related_cve in valid_cve_ids:
+                threat_cve_mappings.append(f"{threat_id} -> {related_cve}")
+        
         prompt = f"""Generate a comprehensive threat modeling report for the following analysis data.
 
-## IMPORTANT REMINDERS:
-- ONLY use the data provided below
-- DO NOT invent any CVE IDs, threat IDs, or component names
-- Every piece of information must come from this data
-- If a section has no data, state "No data available"
+## CRITICAL DATA INTEGRITY RULES:
+
+### VALID CVE IDs (ONLY these may appear in your report):
+{json.dumps(valid_cve_ids, indent=2) if valid_cve_ids else '[]  (No CVEs in input)'}
+
+### VALID THREAT-CVE MAPPINGS (ONLY these may appear in Section 7):
+{chr(10).join(threat_cve_mappings) if threat_cve_mappings else 'NONE - No threats have related_cve_id set. Section 7 should state: "No direct Threat-CVE correlations exist."'}
+
+### RULES:
+- You may ONLY use CVE IDs from the list above
+- You may ONLY create Threat-CVE rows for the mappings listed above
+- STRIDE threats WITHOUT related_cve_id must NOT appear in Section 7
+- DO NOT invent conceptual or illustrative CVE mappings
+- If a threat description mentions a vulnerability type, do NOT map it to a random CVE
 
 ## ANALYSIS DATA:
 
@@ -376,7 +429,12 @@ class ReportSynthesizerAgent:
 - Critical CVEs: {report_data['summary_stats']['critical_cves']}
 - Actively Exploited: {report_data['summary_stats']['actively_exploited']}
 
-Generate the complete 12-section Markdown report now. Remember: NEVER invent content not in the data above."""
+Generate the complete 12-section Markdown report now. 
+
+FINAL REMINDER: 
+- Section 7 (Threat-CVE Matrix) must ONLY contain the {len(threat_cve_mappings)} valid mappings listed above
+- If zero valid mappings, state "No direct Threat-CVE correlations exist"
+- NEVER guess or infer CVE relationships"""
 
         return prompt
     

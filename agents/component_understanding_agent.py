@@ -418,6 +418,9 @@ def get_generic_category(name: str) -> Optional[List[str]]:
     """
     Get likely technology categories for a generic label.
     
+    STRICT MATCHING: Only returns tech suggestions when there's a clear infrastructure match.
+    Business services (Orders, Customer, Catalog) should NOT be mapped to analytics/etc.
+    
     Args:
         name: The generic component name
         
@@ -426,14 +429,30 @@ def get_generic_category(name: str) -> Optional[List[str]]:
     """
     normalized = _normalize_name(name)
     
-    # Direct match
+    # EXCLUSIONS: These component types should NOT be mapped to tech products
+    # They are business services, not infrastructure
+    exclusion_patterns = [
+        'service', 'orders', 'customer', 'catalog', 'inventory', 'payment',
+        'browser', 'mobile', 'client', 'user', 'frontend', 'web browser',
+        'mobile app', 'application', 'app', 'backend service', 'microservice'
+    ]
+    
+    for pattern in exclusion_patterns:
+        if pattern in normalized:
+            return None  # Don't infer tech for business services
+    
+    # Direct match only - partial matches are too error-prone
     if normalized in GENERIC_TO_TECH:
         return GENERIC_TO_TECH[normalized]
     
-    # Partial match
-    for generic, techs in GENERIC_TO_TECH.items():
-        if generic in normalized or normalized in generic:
-            return techs
+    # Only do partial match for INFRASTRUCTURE keywords, not services
+    infrastructure_keywords = ['database', 'cache', 'queue', 'server', 'proxy', 
+                               'gateway', 'storage', 'cdn', 'load balancer']
+    
+    for keyword in infrastructure_keywords:
+        if keyword in normalized:
+            if keyword in GENERIC_TO_TECH:
+                return GENERIC_TO_TECH[keyword]
     
     return None
 
@@ -442,35 +461,53 @@ def get_generic_category(name: str) -> Optional[List[str]]:
 # LLM-Based Inference
 # =============================================================================
 
-INFERENCE_SYSTEM_PROMPT = """You are a software architecture expert analyzing component labels from system diagrams.
+INFERENCE_SYSTEM_PROMPT = """You are a software architecture expert. Your job is to identify what technology a component ACTUALLY IS, not what it connects to.
 
-Your task is to infer specific technology products from generic component labels, using context from the full architecture.
+## CRITICAL RULES - READ CAREFULLY:
 
-INFERENCE RULES:
-1. Consider the technology stack context:
-   - If Django is present, a "Database" is likely PostgreSQL
-   - If Java/Spring is present, databases might be MySQL or PostgreSQL
-   - If Node.js is present, MongoDB or PostgreSQL are common
-   - If AWS services are present, consider AWS-native options first
+### RULE 1: Match the component itself, NOT its connections
+- "Web Browser" = the user's browser (Chrome, Firefox) - NOT a backend database
+- "Mobile App" = a mobile application (iOS/Android) - NOT a server
+- "Public Route" = an ingress/load balancer - NOT a database
+- "Orders Service" = a business microservice - NOT analytics software
 
-2. Consider component relationships:
-   - A "Cache" near a database is likely Redis or Memcached
-   - An "API Gateway" in a microservices architecture is likely Kong, Traefik, or AWS API Gateway
-   - A "Message Queue" in an event-driven system is likely Kafka, RabbitMQ, or SQS
+### RULE 2: If the component name already identifies the technology, USE IT
+- "MySQL (Inventory)" -> suggested_product: "MySQL"
+- "Redis Cache" -> suggested_product: "Redis"
+- "Elasticsearch (Catalog)" -> suggested_product: "Elasticsearch"
+- "PostgreSQL Database" -> suggested_product: "PostgreSQL"
 
-3. Confidence scoring:
-   - 0.9-1.0: Strong context clues make this almost certain
-   - 0.7-0.8: Good context clues suggest this product
-   - 0.5-0.6: Reasonable guess based on common patterns
-   - Below 0.5: Return "Generic" as suggested_product
+### RULE 3: For generic frontend/client components, mark as Generic
+These should have suggested_product = "Generic" (they are not specific products):
+- "Web Browser" -> Generic (it's a client, not a specific tech)
+- "Mobile App" -> Generic (could be any mobile platform)
+- "Frontend Service" -> Generic (unless React/Vue/Angular is specified)
+- "Web Frontend" -> Generic
 
-4. When uncertain:
-   - If confidence would be below 0.5, set suggested_product to "Generic"
-   - Provide reasoning about why the inference is uncertain
+### RULE 4: For backend services without specific tech, mark as Generic
+- "Orders Service" -> Generic (it's a business service, not a specific tech)
+- "Customer Service" -> Generic
+- "Catalog Service" -> Generic
+- "Auth Service" -> Generic (unless Keycloak/Auth0/etc specified)
 
-5. Output format:
-   - Return a JSON object matching the BatchInferenceResult schema
-   - Each component needs: component_name, suggested_product, confidence, reasoning
+### RULE 5: NEVER infer unrelated products
+WRONG: "Orders Service" -> "Google Analytics" (analytics is unrelated)
+WRONG: "Web Browser" -> "Elasticsearch" (browser is not a search engine)
+WRONG: "Public Route" -> "MySQL" (ingress is not a database)
+
+### RULE 6: Confidence calibration
+- 1.0: Name explicitly contains the product (e.g., "MySQL Database")
+- 0.95: Very clear indicator (e.g., "Redis Cache")
+- 0.7-0.8: Strong contextual inference
+- 0.5-0.6: Reasonable guess
+- Below 0.5: Use "Generic"
+
+## OUTPUT:
+Return JSON with results array. Each item:
+- component_name: exact name from input
+- inference.suggested_product: the product name OR "Generic"
+- inference.confidence: 0.0-1.0
+- inference.reasoning: brief explanation
 """
 
 

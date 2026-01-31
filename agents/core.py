@@ -140,14 +140,51 @@ def generate_attack_paths(
     architecture: ArchitectureSchema
 ) -> List[AttackPath]:
     """
-    Generate attack path simulations based on threats and CVEs.
+    Generate realistic attack path simulations following data flows.
     
-    This is a heuristic-based approach that chains related threats
-    and CVEs into potential attack sequences.
+    Creates attack paths that:
+    1. Follow actual data flow paths in the architecture
+    2. Chain multiple components realistically
+    3. Use MITRE ATT&CK techniques appropriately
+    4. Reference actual threats and CVEs from analysis
     """
     attack_paths = []
     
-    # Group threats by component
+    # Build data flow graph
+    flow_graph: Dict[str, List[str]] = {}  # source -> [destinations]
+    reverse_flow: Dict[str, List[str]] = {}  # dest -> [sources]
+    
+    for flow in architecture.data_flows:
+        if flow.source not in flow_graph:
+            flow_graph[flow.source] = []
+        flow_graph[flow.source].append(flow.destination)
+        
+        if flow.destination not in reverse_flow:
+            reverse_flow[flow.destination] = []
+        reverse_flow[flow.destination].append(flow.source)
+    
+    # Identify component types
+    entry_points = []  # Components reachable from external
+    databases = []
+    auth_components = []
+    
+    for comp in architecture.components:
+        name_lower = comp.name.lower()
+        type_lower = comp.type.lower()
+        
+        # Entry points: browsers, mobile, public routes, load balancers
+        if any(x in name_lower or x in type_lower for x in ['browser', 'mobile', 'client', 'public', 'ingress', 'load balancer', 'cdn', 'frontend', 'web']):
+            entry_points.append(comp.name)
+        
+        # Databases
+        if any(x in name_lower or x in type_lower for x in ['database', 'db', 'mysql', 'postgres', 'mongo', 'redis', 'elasticsearch', 'mariadb', 'couchdb']):
+            databases.append(comp.name)
+        
+        # Auth
+        if any(x in name_lower or x in type_lower for x in ['auth', 'identity', 'sso', 'oauth', 'login']):
+            auth_components.append(comp.name)
+    
+    # Group threats and CVEs by component
     component_threats: Dict[str, List[ArchitecturalThreat]] = {}
     for threat in threats:
         comp = threat.affected_component
@@ -155,132 +192,290 @@ def generate_attack_paths(
             component_threats[comp] = []
         component_threats[comp].append(threat)
     
-    # Create CVE lookup
-    cve_lookup = {cve.cve_id: cve for cve in cves}
-    
-    # Find critical CVEs for path generation
-    critical_cves = [c for c in cves if c.severity == "CRITICAL" or c.is_actively_exploited]
+    component_cves: Dict[str, List[ThreatRecord]] = {}
+    for cve in cves:
+        # Match CVE to component by product name
+        for comp in architecture.components:
+            if any(x.lower() in comp.name.lower() for x in cve.affected_products.split()):
+                if comp.name not in component_cves:
+                    component_cves[comp.name] = []
+                component_cves[comp.name].append(cve)
     
     path_id = 1
     
-    # Generate paths for critical CVEs
-    for cve in critical_cves[:3]:  # Limit to top 3
-        # Find related threats
-        related_threats = [
-            t for t in threats 
-            if t.related_cve_id == cve.cve_id or 
-               (t.cwe_id and cve.cwe_id and t.cwe_id == cve.cwe_id)
-        ]
+    # ==========================================================================
+    # PATH 1: External Attacker -> Web/API -> Backend -> Database (Data Breach)
+    # ==========================================================================
+    if entry_points and databases:
+        steps = []
+        step_num = 1
+        referenced_threats = []
+        referenced_cves = []
         
-        if not related_threats:
-            # Find threats affecting same product
-            product_name = cve.affected_products.split(":")[0] if ":" in cve.affected_products else cve.affected_products
-            related_threats = [
-                t for t in threats
-                if product_name.lower() in t.affected_component.lower()
-            ][:2]
+        # Find path from entry to database
+        entry = entry_points[0]
+        target_db = databases[0]
         
-        if related_threats:
-            # Build attack path
-            steps = []
-            step_num = 1
-            
-            # Initial access
+        # Step 1: Reconnaissance
+        steps.append(AttackPathStep(
+            step_number=step_num,
+            action="Perform reconnaissance on public-facing services, enumerate endpoints and technologies",
+            target_component=entry,
+            technique="T1595 - Active Scanning / T1592 - Gather Victim Host Information",
+            outcome="Identify exposed services, versions, and potential vulnerabilities"
+        ))
+        step_num += 1
+        
+        # Step 2: Initial Access via entry point
+        entry_threat = next((t for t in threats if t.affected_component == entry and t.category in ["Spoofing", "Tampering"]), None)
+        if entry_threat:
             steps.append(AttackPathStep(
                 step_number=step_num,
-                action=f"Exploit {cve.cve_id} ({cve.exploitability or 'vulnerability'})",
-                target_component=related_threats[0].affected_component,
+                action=f"Exploit: {entry_threat.description[:80]}",
+                target_component=entry,
                 technique="T1190 - Exploit Public-Facing Application",
-                outcome=f"Gain initial access via {cve.cwe_id or 'vulnerability'}"
+                outcome="Gain authenticated session or bypass authentication"
             ))
-            step_num += 1
-            
-            # Escalation/lateral movement
-            for threat in related_threats[:2]:
-                steps.append(AttackPathStep(
-                    step_number=step_num,
-                    action=threat.description[:100],
-                    target_component=threat.affected_component,
-                    technique=f"STRIDE: {threat.category}",
-                    outcome=f"Achieve {threat.category.lower()}"
-                ))
-                step_num += 1
-            
-            # Impact
-            impact = "System compromise"
-            if "RCE" in (cve.exploitability or ""):
-                impact = "Remote code execution and full system control"
-            elif "DoS" in (cve.exploitability or ""):
-                impact = "Service disruption and availability loss"
-            elif "Disclosure" in (cve.exploitability or ""):
-                impact = "Sensitive data exfiltration"
-            
-            path = AttackPath(
-                path_id=f"AP-{path_id:02d}",
-                name=f"Attack via {cve.cve_id}",
-                description=f"Attack chain exploiting {cve.cve_id} leading to {impact.lower()}",
-                impact=impact,
-                likelihood="High" if cve.is_actively_exploited else "Medium",
-                steps=steps,
-                referenced_threats=[t.threat_id for t in related_threats],
-                referenced_cves=[cve.cve_id]
-            )
-            
-            attack_paths.append(path)
-            path_id += 1
-    
-    # Generate a generic lateral movement path if we have multiple components
-    if len(architecture.components) >= 3 and len(threats) >= 5:
-        # Find entry point threat
-        entry_threats = [t for t in threats if t.category in ["Spoofing", "Tampering"]]
-        escalation_threats = [t for t in threats if t.category == "Elevation of Privilege"]
-        disclosure_threats = [t for t in threats if t.category == "Information Disclosure"]
+            referenced_threats.append(entry_threat.threat_id)
+        else:
+            steps.append(AttackPathStep(
+                step_number=step_num,
+                action="Exploit authentication weakness or use stolen credentials",
+                target_component=entry,
+                technique="T1078 - Valid Accounts / T1110 - Brute Force",
+                outcome="Establish authenticated access to application"
+            ))
+        step_num += 1
         
-        if entry_threats and (escalation_threats or disclosure_threats):
-            steps = [
-                AttackPathStep(
-                    step_number=1,
-                    action="Gain initial foothold via " + entry_threats[0].description[:50],
-                    target_component=entry_threats[0].affected_component,
-                    technique="T1078 - Valid Accounts / T1190 - Exploit Public-Facing Application",
-                    outcome="Initial access to application layer"
-                )
-            ]
-            
-            if escalation_threats:
-                steps.append(AttackPathStep(
-                    step_number=2,
-                    action="Escalate privileges via " + escalation_threats[0].description[:50],
-                    target_component=escalation_threats[0].affected_component,
-                    technique="T1068 - Exploitation for Privilege Escalation",
-                    outcome="Elevated access rights"
-                ))
-            
-            if disclosure_threats:
-                steps.append(AttackPathStep(
-                    step_number=len(steps) + 1,
-                    action="Exfiltrate data via " + disclosure_threats[0].description[:50],
-                    target_component=disclosure_threats[0].affected_component,
-                    technique="T1041 - Exfiltration Over C2 Channel",
-                    outcome="Data breach"
-                ))
-            
-            path = AttackPath(
-                path_id=f"AP-{path_id:02d}",
-                name="Lateral Movement to Data Exfiltration",
-                description="Multi-stage attack progressing from initial access to data theft",
-                impact="Complete compromise of sensitive data",
-                likelihood="Medium",
-                steps=steps,
-                referenced_threats=[
-                    entry_threats[0].threat_id,
-                    *([escalation_threats[0].threat_id] if escalation_threats else []),
-                    *([disclosure_threats[0].threat_id] if disclosure_threats else [])
-                ],
-                referenced_cves=[c.cve_id for c in critical_cves[:2]]
-            )
-            
-            attack_paths.append(path)
+        # Step 3: Move to backend via data flow
+        middle_components = []
+        for dest in flow_graph.get(entry, []):
+            if dest not in entry_points and dest not in databases:
+                middle_components.append(dest)
+        
+        if middle_components:
+            middle = middle_components[0]
+            middle_threat = next((t for t in threats if t.affected_component == middle), None)
+            steps.append(AttackPathStep(
+                step_number=step_num,
+                action=f"Traverse to backend service, exploit internal API or service-to-service trust",
+                target_component=middle,
+                technique="T1021 - Remote Services / T1570 - Lateral Tool Transfer",
+                outcome="Gain access to internal service layer"
+            ))
+            if middle_threat:
+                referenced_threats.append(middle_threat.threat_id)
+            step_num += 1
+        
+        # Step 4: Database exploitation
+        db_threats = component_threats.get(target_db, [])
+        db_cves = component_cves.get(target_db, [])
+        
+        db_threat = next((t for t in db_threats if t.category == "Information Disclosure"), None)
+        if db_threat:
+            steps.append(AttackPathStep(
+                step_number=step_num,
+                action=f"Exploit database: {db_threat.description[:80]}",
+                target_component=target_db,
+                technique="T1213 - Data from Information Repositories / T1005 - Data from Local System",
+                outcome="Extract sensitive data from database"
+            ))
+            referenced_threats.append(db_threat.threat_id)
+        else:
+            steps.append(AttackPathStep(
+                step_number=step_num,
+                action="Execute SQL injection or abuse database credentials to extract data",
+                target_component=target_db,
+                technique="T1213 - Data from Information Repositories",
+                outcome="Exfiltrate customer PII, credentials, or business data"
+            ))
+        
+        if db_cves:
+            referenced_cves.extend([c.cve_id for c in db_cves[:2]])
+        
+        # Step 5: Exfiltration
+        step_num += 1
+        steps.append(AttackPathStep(
+            step_number=step_num,
+            action="Exfiltrate data via HTTPS to attacker-controlled server or cloud storage",
+            target_component=target_db,
+            technique="T1041 - Exfiltration Over C2 Channel / T1567 - Exfiltration Over Web Service",
+            outcome="Complete data breach"
+        ))
+        
+        # Calculate likelihood based on threat severities
+        threat_severities = [t.severity for t in threats if t.threat_id in referenced_threats]
+        cve_severities = [c.severity for c in cves if c.cve_id in referenced_cves]
+        
+        # Likelihood based on highest severity threat/CVE
+        if any(s in ["Critical", "CRITICAL"] for s in threat_severities + cve_severities):
+            path_likelihood = "High"
+        elif any(s in ["High", "HIGH"] for s in threat_severities + cve_severities):
+            path_likelihood = "Medium"
+        else:
+            path_likelihood = "Low"
+        
+        attack_paths.append(AttackPath(
+            path_id=f"AP-{path_id:02d}",
+            name="External Attacker to Database Breach",
+            description=f"Multi-stage attack from external access through {entry} to data exfiltration from {target_db}. Attacker chains application vulnerabilities with database access to achieve full data breach.",
+            impact="Complete compromise of sensitive data including customer PII, credentials, and business data. Potential regulatory violations (GDPR, PCI-DSS).",
+            likelihood=path_likelihood,
+            steps=steps,
+            referenced_threats=referenced_threats,
+            referenced_cves=referenced_cves
+        ))
+        path_id += 1
+    
+    # ==========================================================================
+    # PATH 2: Credential Theft -> Lateral Movement -> Privilege Escalation
+    # ==========================================================================
+    if auth_components and len(threats) >= 3:
+        steps = []
+        referenced_threats = []
+        referenced_cves = []
+        
+        auth_comp = auth_components[0] if auth_components else "Auth Service"
+        
+        # Find spoofing threat
+        spoof_threat = next((t for t in threats if t.category == "Spoofing"), None)
+        priv_threat = next((t for t in threats if t.category == "Elevation of Privilege"), None)
+        
+        steps.append(AttackPathStep(
+            step_number=1,
+            action="Phishing campaign targeting employees to harvest credentials, or exploit password spray against SSO",
+            target_component=auth_comp,
+            technique="T1566 - Phishing / T1110.003 - Password Spraying",
+            outcome="Obtain valid user credentials"
+        ))
+        
+        if spoof_threat:
+            steps.append(AttackPathStep(
+                step_number=2,
+                action=f"Use stolen credentials: {spoof_threat.description[:60]}",
+                target_component=spoof_threat.affected_component,
+                technique="T1078 - Valid Accounts",
+                outcome="Authenticate as legitimate user"
+            ))
+            referenced_threats.append(spoof_threat.threat_id)
+        else:
+            steps.append(AttackPathStep(
+                step_number=2,
+                action="Authenticate to internal services using stolen credentials",
+                target_component=auth_comp,
+                technique="T1078 - Valid Accounts",
+                outcome="Access internal applications as legitimate user"
+            ))
+        
+        steps.append(AttackPathStep(
+            step_number=3,
+            action="Enumerate internal services, discover service accounts and API keys in environment variables or config files",
+            target_component="Internal Services",
+            technique="T1087 - Account Discovery / T1552 - Unsecured Credentials",
+            outcome="Discover high-privilege credentials"
+        ))
+        
+        if priv_threat:
+            steps.append(AttackPathStep(
+                step_number=4,
+                action=f"Escalate privileges: {priv_threat.description[:60]}",
+                target_component=priv_threat.affected_component,
+                technique="T1068 - Exploitation for Privilege Escalation",
+                outcome="Gain administrative access"
+            ))
+            referenced_threats.append(priv_threat.threat_id)
+        else:
+            steps.append(AttackPathStep(
+                step_number=4,
+                action="Exploit misconfigured RBAC or assume service account with elevated permissions",
+                target_component="Backend Services",
+                technique="T1078.003 - Valid Accounts: Cloud Accounts",
+                outcome="Gain cluster-admin or database-admin privileges"
+            ))
+        
+        steps.append(AttackPathStep(
+            step_number=5,
+            action="Establish persistence via backdoor service account, scheduled task, or modified container image",
+            target_component="Kubernetes Cluster",
+            technique="T1053 - Scheduled Task / T1525 - Implant Internal Image",
+            outcome="Maintain persistent access even after initial credentials rotated"
+        ))
+        
+        attack_paths.append(AttackPath(
+            path_id=f"AP-{path_id:02d}",
+            name="Credential Compromise to Cluster Takeover",
+            description="Attacker compromises user credentials through social engineering, then leverages internal trust relationships and privilege escalation to gain full cluster control. Represents insider threat or advanced external attacker.",
+            impact="Full administrative control of Kubernetes/OpenShift cluster. Ability to deploy malicious workloads, access secrets, and pivot to connected systems.",
+            likelihood="Medium",
+            steps=steps,
+            referenced_threats=referenced_threats,
+            referenced_cves=referenced_cves
+        ))
+        path_id += 1
+    
+    # ==========================================================================
+    # PATH 3: Supply Chain / Dependency Attack
+    # ==========================================================================
+    if len(architecture.components) >= 3:
+        steps = []
+        referenced_threats = []
+        
+        tampering_threats = [t for t in threats if t.category == "Tampering"]
+        
+        steps.append(AttackPathStep(
+            step_number=1,
+            action="Compromise upstream dependency in container registry or package repository (npm, PyPI, Docker Hub)",
+            target_component="Container Registry / Package Manager",
+            technique="T1195.002 - Supply Chain Compromise: Compromise Software Supply Chain",
+            outcome="Inject malicious code into trusted dependency"
+        ))
+        
+        steps.append(AttackPathStep(
+            step_number=2,
+            action="Malicious dependency pulled during CI/CD build or pod restart",
+            target_component="CI/CD Pipeline",
+            technique="T1195.002 - Supply Chain Compromise",
+            outcome="Backdoored container deployed to production"
+        ))
+        
+        if tampering_threats:
+            target_threat = tampering_threats[0]
+            steps.append(AttackPathStep(
+                step_number=3,
+                action=f"Backdoor activates: {target_threat.description[:60]}",
+                target_component=target_threat.affected_component,
+                technique="T1059 - Command and Scripting Interpreter",
+                outcome="Execute arbitrary code within trusted service"
+            ))
+            referenced_threats.append(target_threat.threat_id)
+        else:
+            steps.append(AttackPathStep(
+                step_number=3,
+                action="Backdoor activates and establishes command-and-control channel",
+                target_component="Application Pod",
+                technique="T1059 - Command and Scripting Interpreter",
+                outcome="Remote access to internal network"
+            ))
+        
+        steps.append(AttackPathStep(
+            step_number=4,
+            action="Pivot from compromised pod to access service mesh, secrets, and connected databases",
+            target_component="Service Mesh / Secrets",
+            technique="T1552.007 - Unsecured Credentials: Container API",
+            outcome="Access Kubernetes secrets, service account tokens"
+        ))
+        
+        attack_paths.append(AttackPath(
+            path_id=f"AP-{path_id:02d}",
+            name="Supply Chain Compromise",
+            description="Attacker compromises software supply chain (container images, packages, or CI/CD pipeline) to inject malicious code that executes within trusted production environment.",
+            impact="Silent compromise of production systems with legitimate-appearing workloads. Difficult to detect. Can lead to data theft, cryptomining, or further lateral movement.",
+            likelihood="Low",
+            steps=steps,
+            referenced_threats=referenced_threats,
+            referenced_cves=[]
+        ))
+        path_id += 1
     
     return attack_paths
 

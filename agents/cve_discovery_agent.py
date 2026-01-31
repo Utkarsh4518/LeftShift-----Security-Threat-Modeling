@@ -171,9 +171,24 @@ class CVEDiscoveryAgent:
         threats = results.threats
         logger.info(f"Found {len(threats)} CVEs from vulnerability search")
         
-        # Step 4: Enrich with mitigations
-        enriched_threats = []
+        # Step 4: Deduplicate CVEs (same CVE might appear from multiple product searches)
+        seen_cve_ids = set()
+        unique_threats = []
+        duplicates_removed = 0
+        
         for threat in threats:
+            if threat.cve_id not in seen_cve_ids:
+                seen_cve_ids.add(threat.cve_id)
+                unique_threats.append(threat)
+            else:
+                duplicates_removed += 1
+        
+        if duplicates_removed > 0:
+            logger.info(f"Removed {duplicates_removed} duplicate CVE entries")
+        
+        # Step 5: Enrich with mitigations
+        enriched_threats = []
+        for threat in unique_threats:
             try:
                 enriched = enrich_threat_with_mitigation(threat)
                 enriched_threats.append(enriched)
@@ -181,7 +196,7 @@ class CVEDiscoveryAgent:
                 logger.error(f"Failed to enrich {threat.cve_id} with mitigation: {e}")
                 enriched_threats.append(threat)
         
-        logger.info(f"CVE discovery complete: {len(enriched_threats)} threats with mitigations")
+        logger.info(f"CVE discovery complete: {len(enriched_threats)} unique threats with mitigations")
         
         return enriched_threats
     
