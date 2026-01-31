@@ -51,109 +51,123 @@ The system is designed for security engineers, architects, and developers who wa
 
 ## System Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        LEFT<<SHIFT PIPELINE ARCHITECTURE                     │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph INPUT["📥 INPUT"]
+        A[("🖼️ Architecture Diagram<br/>(PNG/JPEG)")] 
+        B[("📄 JSON Specification")]
+    end
 
-                              ┌──────────────────┐
-                              │   Input Source   │
-                              │  (Image / JSON)  │
-                              └────────┬─────────┘
-                                       │
-                                       ▼
-                    ┌──────────────────────────────────────┐
-                    │    Stage 1: Architecture Extraction   │
-                    │         (Vision Agent / JSON)         │
-                    │      Model: gemini-3-pro-image-preview│
-                    └────────────────┬─────────────────────┘
-                                     │
-                    ┌────────────────┴────────────────┐
-                    │         PARALLEL EXECUTION       │
-                    ▼                                  ▼
-     ┌──────────────────────────┐    ┌──────────────────────────┐
-     │ Stage 2a: Component      │    │ Stage 2b: Threat         │
-     │ Understanding Agent      │    │ Knowledge Agent (STRIDE) │
-     │ Model: gemini-3-pro-     │    │ Model: gemini-3-pro-     │
-     │        preview           │    │        preview           │
-     └───────────┬──────────────┘    └───────────┬──────────────┘
-                 │                                │
-                 └────────────────┬───────────────┘
-                                  │
-                                  ▼
-                    ┌──────────────────────────────────────┐
-                    │     Stage 3: CVE Discovery Agent      │
-                    │         (NVD + CISA KEV APIs)         │
-                    │            No LLM Required            │
-                    └────────────────┬─────────────────────┘
-                                     │
-                                     ▼
-                    ┌──────────────────────────────────────┐
-                    │   Stage 4: Threat Relevance Agent     │
-                    │       Model: gemini-3-pro-preview     │
-                    └────────────────┬─────────────────────┘
-                                     │
-                                     ▼
-                    ┌──────────────────────────────────────┐
-                    │   Stage 5: Attack Path Generation     │
-                    │    (Architecture-Aware, No LLM)       │
-                    └────────────────┬─────────────────────┘
-                                     │
-                                     ▼
-                    ┌──────────────────────────────────────┐
-                    │   Stage 6: Report Synthesizer Agent   │
-                    │       Model: gemini-3-pro-preview     │
-                    └────────────────┬─────────────────────┘
-                                     │
-                                     ▼
-                              ┌──────────────────┐
-                              │  Markdown Report │
-                              │   (12 Sections)  │
-                              └──────────────────┘
+    subgraph STAGE1["🔍 STAGE 1: Architecture Extraction"]
+        C["Vision Agent<br/><code>gemini-3-pro-image-preview</code>"]
+    end
+
+    subgraph PARALLEL["⚡ PARALLEL EXECUTION"]
+        direction LR
+        subgraph S2A["STAGE 2a"]
+            D["🔧 Component Understanding<br/><code>gemini-3-pro-preview</code>"]
+        end
+        subgraph S2B["STAGE 2b"]
+            E["⚠️ Threat Knowledge (STRIDE)<br/><code>gemini-3-pro-preview</code>"]
+        end
+    end
+
+    subgraph STAGE3["🔎 STAGE 3: CVE Discovery"]
+        F["NVD + CISA KEV APIs<br/><i>No LLM Required</i>"]
+    end
+
+    subgraph STAGE4["📊 STAGE 4: Threat Relevance"]
+        G["Relevance Scoring<br/><code>gemini-3-pro-preview</code>"]
+    end
+
+    subgraph STAGE5["🎯 STAGE 5: Attack Paths"]
+        H["Architecture-Aware Generation<br/><i>Rule-Based</i>"]
+    end
+
+    subgraph STAGE6["📝 STAGE 6: Report Synthesis"]
+        I["Markdown Report Generator<br/><code>gemini-3-pro-preview</code>"]
+    end
+
+    subgraph OUTPUT["📤 OUTPUT"]
+        J[("📋 Security Threat Report<br/>(12 Sections)")]
+    end
+
+    A --> C
+    B --> C
+    C --> D
+    C --> E
+    D --> F
+    E --> F
+    F --> G
+    G --> H
+    H --> I
+    I --> J
+
+    style INPUT fill:#1a1a2e,stroke:#4a9eff,stroke-width:2px
+    style STAGE1 fill:#16213e,stroke:#4a9eff,stroke-width:2px
+    style PARALLEL fill:#0f3460,stroke:#e94560,stroke-width:3px
+    style S2A fill:#1a1a2e,stroke:#4a9eff,stroke-width:1px
+    style S2B fill:#1a1a2e,stroke:#4a9eff,stroke-width:1px
+    style STAGE3 fill:#16213e,stroke:#4a9eff,stroke-width:2px
+    style STAGE4 fill:#16213e,stroke:#4a9eff,stroke-width:2px
+    style STAGE5 fill:#16213e,stroke:#4a9eff,stroke-width:2px
+    style STAGE6 fill:#16213e,stroke:#4a9eff,stroke-width:2px
+    style OUTPUT fill:#1a1a2e,stroke:#00d9ff,stroke-width:2px
 ```
 
 ### LangGraph State Machine
 
-The pipeline uses LangGraph for orchestration, enabling:
+The pipeline uses **LangGraph** for orchestration, enabling:
 
-- **Parallel Execution**: Stages 2a and 2b run simultaneously
-- **State Management**: TypedDict state flows between nodes
-- **Checkpointing**: Failed runs can be resumed from the last successful stage
-- **Error Handling**: Graceful degradation with fallback mechanisms
+| Feature | Description |
+|---------|-------------|
+| **Parallel Execution** | Stages 2a and 2b run simultaneously |
+| **State Management** | TypedDict state flows between nodes |
+| **Checkpointing** | Failed runs can resume from last successful stage |
+| **Error Handling** | Graceful degradation with fallback mechanisms |
 
-```
-                    ┌─────────────────────┐
-                    │  extract_architecture│
-                    └─────────┬───────────┘
-                              │
-              ┌───────────────┴───────────────┐
-              │                               │
-              ▼                               ▼
-    ┌─────────────────────┐     ┌──────────────────────┐
-    │ understand_components│     │   generate_threats   │
-    └─────────┬───────────┘     └──────────┬───────────┘
-              │                             │
-              └───────────────┬─────────────┘
-                              │
-                              ▼
-                    ┌─────────────────────┐
-                    │    discover_cves    │
-                    └─────────┬───────────┘
-                              │
-                              ▼
-                    ┌─────────────────────┐
-                    │  analyze_relevance  │
-                    └─────────┬───────────┘
-                              │
-                              ▼
-                    ┌─────────────────────┐
-                    │generate_attack_paths│
-                    └─────────┬───────────┘
-                              │
-                              ▼
-                    ┌─────────────────────┐
-                    │  synthesize_report  │
-                    └─────────────────────┘
+```mermaid
+stateDiagram-v2
+    [*] --> extract_architecture: START
+
+    extract_architecture --> understand_components: Fork
+    extract_architecture --> generate_threats: Fork
+    
+    understand_components --> discover_cves: Join
+    generate_threats --> discover_cves: Join
+    
+    discover_cves --> analyze_relevance
+    analyze_relevance --> generate_attack_paths
+    generate_attack_paths --> synthesize_report
+    
+    synthesize_report --> [*]: END
+
+    state extract_architecture {
+        [*] --> ProcessImage: Image Input
+        [*] --> ParseJSON: JSON Input
+        ProcessImage --> ValidateSchema
+        ParseJSON --> ValidateSchema
+    }
+
+    state "Parallel Zone" as parallel {
+        understand_components: 🔧 Component\nUnderstanding
+        generate_threats: ⚠️ STRIDE\nAnalysis
+    }
+
+    note right of extract_architecture
+        Vision Agent
+        gemini-3-pro-image-preview
+    end note
+
+    note right of discover_cves
+        NVD + CISA KEV
+        No LLM Required
+    end note
+
+    note right of synthesize_report
+        12-Section Report
+        gemini-3-pro-preview
+    end note
 ```
 
 ---
