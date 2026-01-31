@@ -4,7 +4,7 @@ Threat Knowledge Agent for Left<<Shift Threat Modeling System.
 This agent performs STRIDE-based threat analysis on architecture components,
 generates detailed threats with CWE mappings, and identifies architectural weaknesses.
 
-Uses OpenAI GPT-5.2 for STRIDE analysis and threat generation.
+Uses Google Gemini for STRIDE analysis and threat generation.
 """
 
 import json
@@ -14,7 +14,8 @@ import time
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from google import genai
+from google.genai import types
 from pydantic import BaseModel, Field
 
 from tools.models import (
@@ -36,8 +37,8 @@ logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 BASE_DELAY = 2.0
-PRIMARY_MODEL = "gpt-5.2"
-FALLBACK_MODEL = "gpt-5"
+PRIMARY_MODEL = "gemini-3-pro-preview"
+FALLBACK_MODEL = "gemini-2.5-pro"
 
 # =============================================================================
 # STRIDE Analysis System Instruction
@@ -317,7 +318,7 @@ class ThreatKnowledgeAgent:
     3. Validates and corrects CWE mappings
     4. Identifies architectural weaknesses
     
-    Uses OpenAI GPT-5.2 for threat generation.
+    Uses Google Gemini for threat generation.
     """
     
     def __init__(self, model_name: str = PRIMARY_MODEL):
@@ -325,24 +326,24 @@ class ThreatKnowledgeAgent:
         Initialize the Threat Knowledge Agent.
         
         Args:
-            model_name: OpenAI model to use for generation
+            model_name: Gemini model to use for generation
         """
         self.model_name = model_name
-        self.client: Optional[OpenAI] = None
+        self.client: Optional[genai.Client] = None
         self._initialize_client()
     
     def _initialize_client(self) -> None:
-        """Initialize OpenAI client if API key is available."""
-        api_key = os.getenv("OPENAI_API_KEY")
-        if api_key and api_key != "your_openai_api_key_here":
+        """Initialize Gemini client if API key is available."""
+        api_key = os.getenv("GEMINI_API_KEY")
+        if api_key and api_key != "your_gemini_api_key_here":
             try:
-                self.client = OpenAI(api_key=api_key)
-                logger.info(f"OpenAI client initialized with model: {self.model_name}")
+                self.client = genai.Client(api_key=api_key)
+                logger.info(f"Gemini client initialized with model: {self.model_name}")
             except Exception as e:
-                logger.warning(f"Failed to initialize OpenAI client: {e}")
+                logger.warning(f"Failed to initialize Gemini client: {e}")
                 self.client = None
         else:
-            logger.warning("OPENAI_API_KEY not configured - threat generation disabled")
+            logger.warning("GEMINI_API_KEY not configured - threat generation disabled")
             self.client = None
     
     def _call_llm_with_retry(
@@ -377,18 +378,18 @@ class ThreatKnowledgeAgent:
             
             # Add schema guidance to system instruction
             schema_guidance = f"\n\nYou MUST respond with valid JSON matching this schema:\n{json.dumps(response_schema, indent=2)}"
+            full_prompt = f"{system_instruction}{schema_guidance}\n\n{prompt}"
             
-            response = self.client.chat.completions.create(
+            response = self.client.models.generate_content(
                 model=model,
-                messages=[
-                    {"role": "system", "content": system_instruction + schema_guidance},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.3,
-                response_format={"type": "json_object"}
+                contents=full_prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.3,
+                    response_mime_type="application/json"
+                )
             )
             
-            return response.choices[0].message.content
+            return response.text
             
         except Exception as e:
             logger.warning(f"LLM call failed (attempt {attempt}): {e}")

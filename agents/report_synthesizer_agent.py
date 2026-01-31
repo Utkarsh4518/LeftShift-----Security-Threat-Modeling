@@ -16,7 +16,8 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from google import genai
+from google.genai import types
 from pydantic import BaseModel
 
 from tools.models import (
@@ -40,8 +41,8 @@ logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 BASE_DELAY = 2.0
-PRIMARY_MODEL = "gpt-5.2"
-FALLBACK_MODEL = "gpt-5"
+PRIMARY_MODEL = "gemini-3-pro-preview"
+FALLBACK_MODEL = "gemini-2.5-pro"
 
 # =============================================================================
 # Report Structure System Instruction
@@ -224,7 +225,7 @@ class ReportSynthesizerAgent:
     2. Generates a structured Markdown report
     3. Ensures data integrity - NEVER invents content
     
-    Uses OpenAI GPT-5.2 for report generation.
+    Uses Google Gemini for report generation.
     """
     
     def __init__(self, model_name: str = PRIMARY_MODEL):
@@ -232,24 +233,24 @@ class ReportSynthesizerAgent:
         Initialize the Report Synthesizer Agent.
         
         Args:
-            model_name: OpenAI model to use for report generation
+            model_name: Gemini model to use for report generation
         """
         self.model_name = model_name
-        self.client: Optional[OpenAI] = None
+        self.client: Optional[genai.Client] = None
         self._initialize_client()
     
     def _initialize_client(self) -> None:
-        """Initialize OpenAI client if API key is available."""
-        api_key = os.getenv("OPENAI_API_KEY")
-        if api_key and api_key != "your_openai_api_key_here":
+        """Initialize Gemini client if API key is available."""
+        api_key = os.getenv("GEMINI_API_KEY")
+        if api_key and api_key != "your_gemini_api_key_here":
             try:
-                self.client = OpenAI(api_key=api_key)
-                logger.info(f"OpenAI client initialized for report synthesis")
+                self.client = genai.Client(api_key=api_key)
+                logger.info(f"Gemini client initialized for report synthesis")
             except Exception as e:
-                logger.warning(f"Failed to initialize OpenAI client: {e}")
+                logger.warning(f"Failed to initialize Gemini client: {e}")
                 self.client = None
         else:
-            logger.warning("OPENAI_API_KEY not configured")
+            logger.warning("GEMINI_API_KEY not configured")
             self.client = None
     
     def _call_llm_with_retry(
@@ -267,17 +268,18 @@ class ReportSynthesizerAgent:
         try:
             logger.info(f"Report generation attempt {attempt}/{MAX_RETRIES} using {model}")
             
-            response = self.client.chat.completions.create(
+            full_prompt = f"{REPORT_SYSTEM_INSTRUCTION}\n\n{prompt}"
+            
+            response = self.client.models.generate_content(
                 model=model,
-                messages=[
-                    {"role": "system", "content": REPORT_SYSTEM_INSTRUCTION},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.3,  # Lower temperature for consistency
-                max_completion_tokens=16000  # Allow long reports (GPT-5.x parameter)
+                contents=full_prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.3,
+                    max_output_tokens=16000  # Allow long reports
+                )
             )
             
-            return response.choices[0].message.content
+            return response.text
             
         except Exception as e:
             logger.warning(f"LLM call failed (attempt {attempt}): {e}")

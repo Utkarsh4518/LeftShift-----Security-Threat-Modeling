@@ -8,7 +8,7 @@ enriching relevant ones with context-specific information.
 IMPORTANT: This agent does NOT generate or hallucinate CVEs.
 It only analyzes CVEs that were discovered from real vulnerability databases.
 
-Uses OpenAI GPT-5.2 for relevance analysis.
+Uses Google Gemini for relevance analysis.
 """
 
 import json
@@ -18,7 +18,8 @@ import time
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from google import genai
+from google.genai import types
 from pydantic import BaseModel, Field
 
 from tools.models import (
@@ -40,8 +41,8 @@ logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 BASE_DELAY = 2.0
-PRIMARY_MODEL = "gpt-5.2"
-FALLBACK_MODEL = "gpt-5"
+PRIMARY_MODEL = "gemini-3-pro-preview"
+FALLBACK_MODEL = "gemini-2.5-pro"
 
 # =============================================================================
 # Relevance Analysis System Instruction
@@ -218,7 +219,7 @@ class ThreatRelevanceAgent:
     IMPORTANT: This agent does NOT generate CVEs - it only analyzes
     CVEs that were discovered from real vulnerability databases.
     
-    Uses OpenAI GPT-5.2 for relevance analysis.
+    Uses Google Gemini for relevance analysis.
     """
     
     def __init__(self, model_name: str = PRIMARY_MODEL):
@@ -226,24 +227,24 @@ class ThreatRelevanceAgent:
         Initialize the Threat Relevance Agent.
         
         Args:
-            model_name: OpenAI model to use for analysis
+            model_name: Gemini model to use for analysis
         """
         self.model_name = model_name
-        self.client: Optional[OpenAI] = None
+        self.client: Optional[genai.Client] = None
         self._initialize_client()
     
     def _initialize_client(self) -> None:
-        """Initialize OpenAI client if API key is available."""
-        api_key = os.getenv("OPENAI_API_KEY")
-        if api_key and api_key != "your_openai_api_key_here":
+        """Initialize Gemini client if API key is available."""
+        api_key = os.getenv("GEMINI_API_KEY")
+        if api_key and api_key != "your_gemini_api_key_here":
             try:
-                self.client = OpenAI(api_key=api_key)
-                logger.info(f"OpenAI client initialized for relevance analysis")
+                self.client = genai.Client(api_key=api_key)
+                logger.info(f"Gemini client initialized for relevance analysis")
             except Exception as e:
-                logger.warning(f"Failed to initialize OpenAI client: {e}")
+                logger.warning(f"Failed to initialize Gemini client: {e}")
                 self.client = None
         else:
-            logger.warning("OPENAI_API_KEY not configured")
+            logger.warning("GEMINI_API_KEY not configured")
             self.client = None
     
     def _call_llm_with_retry(
@@ -264,18 +265,18 @@ class ThreatRelevanceAgent:
             # Add schema guidance to system instruction
             schema = _create_relevance_schema()
             schema_guidance = f"\n\nYou MUST respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2)}"
+            full_prompt = f"{RELEVANCE_SYSTEM_INSTRUCTION}{schema_guidance}\n\n{prompt}"
             
-            response = self.client.chat.completions.create(
+            response = self.client.models.generate_content(
                 model=model,
-                messages=[
-                    {"role": "system", "content": RELEVANCE_SYSTEM_INSTRUCTION + schema_guidance},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.2,
-                response_format={"type": "json_object"}
+                contents=full_prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.2,
+                    response_mime_type="application/json"
+                )
             )
             
-            return response.choices[0].message.content
+            return response.text
             
         except Exception as e:
             logger.warning(f"LLM call failed (attempt {attempt}): {e}")

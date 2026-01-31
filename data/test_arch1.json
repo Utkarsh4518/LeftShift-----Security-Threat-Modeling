@@ -1,0 +1,185 @@
+{
+  "project_name": "Cloud Native E-Commerce Platform",
+  "description": "OpenShift/Kubernetes-based microservices architecture with mobile and web frontends, backend services, and multiple database systems",
+  "components": [
+    {
+      "name": "Web Browser",
+      "type": "Client"
+    },
+    {
+      "name": "Mobile App",
+      "type": "Client"
+    },
+    {
+      "name": "Public Route",
+      "type": "Ingress Controller"
+    },
+    {
+      "name": "Web Frontend",
+      "type": "Frontend Service"
+    },
+    {
+      "name": "Mobile Foundation - App Config",
+      "type": "Mobile Backend Service"
+    },
+    {
+      "name": "Mobile Foundation - Push Notifications",
+      "type": "Mobile Backend Service"
+    },
+    {
+      "name": "Mobile Foundation - Device Analytics",
+      "type": "Mobile Backend Service"
+    },
+    {
+      "name": "Mobile Foundation - App Cycle",
+      "type": "Mobile Backend Service"
+    },
+    {
+      "name": "Kube DNS",
+      "type": "Service Discovery"
+    },
+    {
+      "name": "Catalog Service",
+      "type": "Backend Microservice"
+    },
+    {
+      "name": "Customer Service",
+      "type": "Backend Microservice"
+    },
+    {
+      "name": "Inventory Service",
+      "type": "Backend Microservice"
+    },
+    {
+      "name": "Orders Service",
+      "type": "Backend Microservice"
+    },
+    {
+      "name": "Auth Service",
+      "type": "Authentication Service"
+    },
+    {
+      "name": "Elasticsearch (Catalog)",
+      "type": "Search Database"
+    },
+    {
+      "name": "CouchDB",
+      "type": "Document Database"
+    },
+    {
+      "name": "MySQL (Inventory)",
+      "type": "Relational Database"
+    },
+    {
+      "name": "MariaDB",
+      "type": "Relational Database"
+    },
+    {
+      "name": "Elasticsearch (Logs)",
+      "type": "Search Database"
+    },
+    {
+      "name": "MySQL (Auth)",
+      "type": "Relational Database"
+    }
+  ],
+  "data_flows": [
+    {
+      "source": "Web Browser",
+      "destination": "Public Route",
+      "protocol": "HTTPS"
+    },
+    {
+      "source": "Mobile App",
+      "destination": "Public Route",
+      "protocol": "HTTPS"
+    },
+    {
+      "source": "Public Route",
+      "destination": "Web Frontend",
+      "protocol": "HTTP"
+    },
+    {
+      "source": "Public Route",
+      "destination": "Mobile Foundation - App Config",
+      "protocol": "HTTP"
+    },
+    {
+      "source": "Web Frontend",
+      "destination": "Kube DNS",
+      "protocol": "DNS"
+    },
+    {
+      "source": "Mobile Foundation - App Config",
+      "destination": "Kube DNS",
+      "protocol": "DNS"
+    },
+    {
+      "source": "Kube DNS",
+      "destination": "Catalog Service",
+      "protocol": "HTTP/gRPC"
+    },
+    {
+      "source": "Kube DNS",
+      "destination": "Customer Service",
+      "protocol": "HTTP/gRPC"
+    },
+    {
+      "source": "Kube DNS",
+      "destination": "Inventory Service",
+      "protocol": "HTTP/gRPC"
+    },
+    {
+      "source": "Kube DNS",
+      "destination": "Orders Service",
+      "protocol": "HTTP/gRPC"
+    },
+    {
+      "source": "Catalog Service",
+      "destination": "Elasticsearch (Catalog)",
+      "protocol": "HTTP/9200"
+    },
+    {
+      "source": "Customer Service",
+      "destination": "CouchDB",
+      "protocol": "HTTP/5984"
+    },
+    {
+      "source": "Inventory Service",
+      "destination": "MySQL (Inventory)",
+      "protocol": "TCP/3306"
+    },
+    {
+      "source": "Orders Service",
+      "destination": "MariaDB",
+      "protocol": "TCP/3306"
+    },
+    {
+      "source": "Auth Service",
+      "destination": "Elasticsearch (Logs)",
+      "protocol": "HTTP/9200"
+    },
+    {
+      "source": "Auth Service",
+      "destination": "MySQL (Auth)",
+      "protocol": "TCP/3306"
+    },
+    {
+      "source": "Web Frontend",
+      "destination": "Auth Service",
+      "protocol": "HTTP"
+    },
+    {
+      "source": "Mobile Foundation - App Config",
+      "destination": "Auth Service",
+      "protocol": "HTTP"
+    }
+  ],
+  "trust_boundaries": [
+    "Internet (Untrusted) - Browser/Mobile clients",
+    "DMZ - Public Route/Ingress",
+    "OpenShift/Kubernetes Cluster - Frontend Services",
+    "OpenShift/Kubernetes Cluster - Backend Services",
+    "Database Services Zone - All databases"
+  ]
+}

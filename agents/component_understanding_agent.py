@@ -5,7 +5,7 @@ This agent analyzes component labels from architecture diagrams and determines
 whether they represent specific software products or generic labels. For generic
 labels, it uses LLM-based inference to suggest likely technologies based on context.
 
-Uses OpenAI GPT-5.2 for text-based reasoning tasks.
+Uses Google Gemini for text-based reasoning tasks.
 """
 
 import json
@@ -16,7 +16,8 @@ import time
 from typing import Any, Dict, List, Optional, Set
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from google import genai
+from google.genai import types
 from pydantic import BaseModel, Field
 
 # Load environment variables
@@ -32,8 +33,8 @@ logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 BASE_DELAY = 2.0
-PRIMARY_MODEL = "gpt-5.2"
-FALLBACK_MODEL = "gpt-5"
+PRIMARY_MODEL = "gemini-3-pro-preview"
+FALLBACK_MODEL = "gemini-2.5-pro"
 
 # =============================================================================
 # Generic Labels Detection
@@ -516,21 +517,21 @@ class ComponentUnderstandingAgent:
     
     def __init__(self):
         """Initialize the Component Understanding Agent."""
-        self.client: Optional[OpenAI] = None
+        self.client: Optional[genai.Client] = None
         self._initialize_client()
     
     def _initialize_client(self) -> None:
-        """Initialize OpenAI client if API key is available."""
-        api_key = os.getenv("OPENAI_API_KEY")
-        if api_key and api_key != "your_openai_api_key_here":
+        """Initialize Gemini client if API key is available."""
+        api_key = os.getenv("GEMINI_API_KEY")
+        if api_key and api_key != "your_gemini_api_key_here":
             try:
-                self.client = OpenAI(api_key=api_key)
-                logger.info("OpenAI client initialized successfully")
+                self.client = genai.Client(api_key=api_key)
+                logger.info("Gemini client initialized successfully")
             except Exception as e:
-                logger.warning(f"Failed to initialize OpenAI client: {e}")
+                logger.warning(f"Failed to initialize Gemini client: {e}")
                 self.client = None
         else:
-            logger.warning("OPENAI_API_KEY not configured - LLM inference disabled")
+            logger.warning("GEMINI_API_KEY not configured - LLM inference disabled")
             self.client = None
     
     def _call_llm_with_retry(
@@ -557,17 +558,18 @@ class ComponentUnderstandingAgent:
         try:
             logger.info(f"LLM call attempt {attempt}/{MAX_RETRIES} using {model}")
             
-            response = self.client.chat.completions.create(
+            full_prompt = f"{INFERENCE_SYSTEM_PROMPT}\n\n{prompt}"
+            
+            response = self.client.models.generate_content(
                 model=model,
-                messages=[
-                    {"role": "system", "content": INFERENCE_SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.2,
-                response_format={"type": "json_object"}
+                contents=full_prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.2,
+                    response_mime_type="application/json"
+                )
             )
             
-            return response.choices[0].message.content
+            return response.text
             
         except Exception as e:
             logger.warning(f"LLM call failed (attempt {attempt}): {e}")
