@@ -713,25 +713,29 @@ def run_pipeline_graph(
     else:
         config["configurable"] = {"thread_id": f"pipeline_{int(start_time)}"}
     
-    # Execute graph
-    final_state = None
-    for state in graph.stream(initial_state, config):
-        final_state = state
-    
-    # Extract results from final state
-    # The state is returned as a dict with node names as keys
-    # We need to merge all the updates
+    # Execute graph - accumulate ALL state updates from stream
     merged_state = initial_state.copy()
-    if isinstance(final_state, dict):
-        for node_name, node_state in final_state.items():
-            if isinstance(node_state, dict):
-                for key, value in node_state.items():
-                    if key == "stage_times" and isinstance(value, dict):
-                        merged_state["stage_times"].update(value)
-                    elif key == "errors" and isinstance(value, list):
-                        merged_state["errors"].extend(value)
-                    elif value is not None:
-                        merged_state[key] = value
+    
+    for state_update in graph.stream(initial_state, config):
+        # Each state_update is a dict with node_name -> node_output
+        if isinstance(state_update, dict):
+            for node_name, node_state in state_update.items():
+                if isinstance(node_state, dict):
+                    for key, value in node_state.items():
+                        if key == "stage_times" and isinstance(value, dict):
+                            merged_state["stage_times"].update(value)
+                        elif key == "errors" and isinstance(value, list):
+                            merged_state["errors"].extend(value)
+                        elif value is not None:
+                            merged_state[key] = value
+    
+    # Debug: Check what we accumulated
+    if verbose:
+        print(f"\n[DEBUG] merged_state architecture: {type(merged_state.get('architecture'))}")
+        if merged_state.get('architecture'):
+            arch = merged_state['architecture']
+            if isinstance(arch, dict):
+                print(f"[DEBUG] Architecture components: {len(arch.get('components', []))}")
     
     total_time = time.time() - start_time
     

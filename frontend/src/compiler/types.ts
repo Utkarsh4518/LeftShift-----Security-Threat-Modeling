@@ -118,6 +118,9 @@ export type DomainId =
 /** Edge type for visual differentiation */
 export type EdgeType = 'primary' | 'control' | 'secondary' | 'infra';
 
+/** Routing direction for long-range edges */
+export type RoutingDirection = 'above' | 'below';
+
 /** Node in the RenderGraph for visualization */
 export interface RenderNode {
   id: string;
@@ -142,6 +145,12 @@ export interface RenderEdge {
   collapsedCount?: number;
   /** Index for staggering overlapping edges */
   edgeIndex?: number;
+  /** True if edge spans non-adjacent domains (distance > 1) */
+  isLongRange?: boolean;
+  /** Routing direction for long-range edges through backbone */
+  routingDirection?: RoutingDirection;
+  /** Domain distance (gridPosition difference) */
+  domainDistance?: number;
 }
 
 /** Domain container for grouping related components */
@@ -215,6 +224,14 @@ export interface PositionedEdge {
     edgeType: EdgeType;
     collapsedCount?: number;
     edgeIndex?: number;
+    isLongRange?: boolean;
+    routingDirection?: RoutingDirection;
+    domainDistance?: number;
+    /** Domain bounds for backbone routing */
+    domainBounds?: {
+      topY: number;
+      bottomY: number;
+    };
   };
   animated?: boolean;
 }

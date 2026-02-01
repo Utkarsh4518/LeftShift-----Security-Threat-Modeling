@@ -18,9 +18,10 @@ import type {
   RenderEdge,
   Severity,
   EdgeType,
+  RoutingDirection,
 } from './types';
 import { getLane, getComponentRole } from './roleMapper';
-import { assignDomains, roleToDomain } from './domainAssigner';
+import { assignDomains, roleToDomain, DOMAIN_CONFIG } from './domainAssigner';
 
 /**
  * Severity priority for determining highest risk.
@@ -174,10 +175,73 @@ function assignEdgeIndices(edges: RenderEdge[]): void {
 }
 
 /**
+ * Calculate domain distance between source and target nodes.
+ * Returns the absolute difference in grid positions.
+ */
+function calculateDomainDistance(sourceNode: RenderNode, targetNode: RenderNode): number {
+  const sourceConfig = DOMAIN_CONFIG[sourceNode.domainId];
+  const targetConfig = DOMAIN_CONFIG[targetNode.domainId];
+  
+  if (!sourceConfig || !targetConfig) {
+    return 0;
+  }
+  
+  return Math.abs(targetConfig.gridPosition - sourceConfig.gridPosition);
+}
+
+/**
+ * Assign long-range edge properties for backbone routing.
+ * Long-range edges (domain distance > 1) are routed through the backbone lane.
+ */
+function assignLongRangeRouting(edges: RenderEdge[], nodeMap: Map<string, RenderNode>): void {
+  // Track which edges go above/below for alternating
+  let aboveCount = 0;
+  let belowCount = 0;
+  
+  for (const edge of edges) {
+    const sourceNode = findNodeByName(edge.from, nodeMap);
+    const targetNode = findNodeByName(edge.to, nodeMap);
+    
+    if (!sourceNode || !targetNode) continue;
+    
+    const distance = calculateDomainDistance(sourceNode, targetNode);
+    edge.domainDistance = distance;
+    
+    // Long-range = distance > 1 (skips at least one domain)
+    if (distance > 1) {
+      edge.isLongRange = true;
+      
+      // Alternate routing direction to spread out backbone edges
+      // Also consider edge type - primary edges go above, infra goes below
+      let direction: RoutingDirection;
+      
+      if (edge.edgeType === 'primary' || edge.edgeType === 'control') {
+        direction = 'above';
+        edge.edgeIndex = aboveCount++;
+      } else {
+        direction = 'below';
+        edge.edgeIndex = belowCount++;
+      }
+      
+      edge.routingDirection = direction;
+    } else {
+      edge.isLongRange = false;
+    }
+  }
+}
+
+/**
  * Compiles the Sentinel analysis result into a RenderGraph.
  */
 export function compileDiagram(analysisResult: SentinelAnalysisResult): RenderGraph {
   const { architecture, threats } = analysisResult;
+
+  console.log('[DiagramCompiler] Input:', {
+    projectName: architecture?.project_name,
+    componentCount: architecture?.components?.length,
+    flowCount: architecture?.data_flows?.length,
+    threatCount: threats?.length,
+  });
 
   // Build nodes with roles and domains
   const nodes: RenderNode[] = [];
@@ -263,13 +327,29 @@ export function compileDiagram(analysisResult: SentinelAnalysisResult): RenderGr
 
   // Assign edge indices for staggering overlapping edges
   assignEdgeIndices(edges);
+  
+  // Assign long-range routing for backbone edge routing
+  assignLongRangeRouting(edges, nodeMap);
 
   if (skippedEdges > 0) {
     console.info(`[DiagramCompiler] Skipped ${skippedEdges} invalid edges`);
   }
+  
+  // Log long-range edge info for debugging
+  const longRangeEdges = edges.filter(e => e.isLongRange);
+  if (longRangeEdges.length > 0) {
+    console.info(`[DiagramCompiler] ${longRangeEdges.length} long-range edges will use backbone routing`);
+  }
 
   // Group nodes into domains
   const domains = assignDomains(nodes);
+
+  console.log('[DiagramCompiler] Output:', {
+    nodeCount: nodes.length,
+    domainCount: domains.length,
+    edgeCount: edges.length,
+    domains: domains.map(d => ({ id: d.id, nodeCount: d.nodes.length })),
+  });
 
   // Calculate threat statistics
   const criticalCount = threats.filter((t) => t.severity === 'Critical').length;

@@ -162,8 +162,23 @@ async def analyze_architecture(
         
         print(f"[API] Analysis complete. Report saved to {output_file}")
         
+        # Debug: print raw results before formatting
+        print(f"[API DEBUG] Raw results keys: {list(results.keys())}")
+        if "architecture" in results:
+            arch = results["architecture"]
+            print(f"[API DEBUG] Raw architecture type: {type(arch)}")
+            if hasattr(arch, 'components'):
+                print(f"[API DEBUG] Raw components count: {len(arch.components)}")
+                if arch.components:
+                    print(f"[API DEBUG] First component: {arch.components[0]}")
+        
         # Format response for frontend
         response_data = format_results_for_frontend(results, report)
+        
+        # Debug: print what we're returning
+        print(f"[API DEBUG] Architecture components: {len(response_data.get('architecture', {}).get('components', []))}")
+        print(f"[API DEBUG] Threats: {len(response_data.get('threats', []))}")
+        print(f"[API DEBUG] Project name: {response_data.get('architecture', {}).get('project_name', 'N/A')}")
         
         return JSONResponse(content={
             "status": "complete",
@@ -191,8 +206,18 @@ def format_results_for_frontend(results: dict, report_markdown: str) -> dict:
     
     Converts internal Sentinel data structures to the frontend contract.
     """
+    # Debug: print what we received
+    print(f"[API DEBUG] Results keys: {list(results.keys())}")
+    
     # Extract architecture (it's a Pydantic model or dict)
     architecture = results.get("architecture")
+    print(f"[API DEBUG] Architecture type: {type(architecture)}")
+    
+    if architecture:
+        if hasattr(architecture, 'components'):
+            print(f"[API DEBUG] Architecture.components count: {len(architecture.components)}")
+        elif isinstance(architecture, dict):
+            print(f"[API DEBUG] Architecture dict components: {len(architecture.get('components', []))}")
     
     if architecture is None:
         frontend_architecture = {
@@ -204,7 +229,22 @@ def format_results_for_frontend(results: dict, report_markdown: str) -> dict:
         }
     elif hasattr(architecture, 'model_dump'):
         # Pydantic v2 model
-        frontend_architecture = architecture.model_dump()
+        arch_dump = architecture.model_dump()
+        # Ensure components are properly serialized
+        frontend_architecture = {
+            "project_name": arch_dump.get("project_name", "Unknown Project"),
+            "description": arch_dump.get("description", ""),
+            "components": [
+                {"name": c.get("name", ""), "type": c.get("type", "")}
+                for c in arch_dump.get("components", [])
+            ],
+            "data_flows": [
+                {"source": f.get("source", ""), "destination": f.get("destination", ""), "protocol": f.get("protocol", "")}
+                for f in arch_dump.get("data_flows", [])
+            ],
+            "trust_boundaries": arch_dump.get("trust_boundaries", []),
+        }
+        print(f"[API DEBUG] Serialized {len(frontend_architecture['components'])} components")
     elif hasattr(architecture, 'dict'):
         # Pydantic v1 model
         frontend_architecture = architecture.dict()

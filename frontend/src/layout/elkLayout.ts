@@ -134,19 +134,68 @@ export async function applyElkLayout(
     currentX += domainWidth + CONFIG.DOMAIN_SPACING;
   }
   
-  // Create positioned edges with edge indices for staggering
-  const positionedEdges: PositionedEdge[] = renderGraph.edges.map((edge) => ({
-    id: edge.id,
-    source: edge.from,
-    target: edge.to,
-    type: 'dataFlowEdge',
-    data: {
-      protocol: edge.protocol,
-      edgeType: edge.edgeType,
-      collapsedCount: edge.collapsedCount,
-      edgeIndex: edge.edgeIndex,
-    },
-  }));
+  // Calculate domain bounds for backbone routing
+  const domainBounds = {
+    topY: CONFIG.CANVAS_PADDING,
+    bottomY: CONFIG.CANVAS_PADDING + maxHeight,
+  };
+  
+  // Create maps for node ID validation and lookup (case-insensitive)
+  const nodeIdMap = new Map<string, string>(); // lowercase -> actual ID
+  for (const node of positionedNodes) {
+    nodeIdMap.set(node.id.toLowerCase(), node.id);
+  }
+  
+  // Create positioned edges - ONLY for edges with valid endpoints
+  const positionedEdges: PositionedEdge[] = [];
+  let skippedEdges = 0;
+  
+  for (const edge of renderGraph.edges) {
+    const sourceId = nodeIdMap.get(edge.from.toLowerCase());
+    const targetId = nodeIdMap.get(edge.to.toLowerCase());
+    
+    // Skip edges where source or target doesn't exist as a positioned node
+    if (!sourceId) {
+      console.warn(`[elkLayout] Skipping edge: source "${edge.from}" not positioned`);
+      skippedEdges++;
+      continue;
+    }
+    
+    if (!targetId) {
+      console.warn(`[elkLayout] Skipping edge: target "${edge.to}" not positioned`);
+      skippedEdges++;
+      continue;
+    }
+    
+    // Use the actual positioned node IDs (preserving case)
+    positionedEdges.push({
+      id: edge.id,
+      source: sourceId,
+      target: targetId,
+      type: 'dataFlowEdge',
+      data: {
+        protocol: edge.protocol,
+        edgeType: edge.edgeType,
+        collapsedCount: edge.collapsedCount,
+        edgeIndex: edge.edgeIndex,
+        isLongRange: edge.isLongRange,
+        routingDirection: edge.routingDirection,
+        domainDistance: edge.domainDistance,
+        domainBounds,
+      },
+    });
+  }
+  
+  if (skippedEdges > 0) {
+    console.info(`[elkLayout] Skipped ${skippedEdges} edges with invalid endpoints`);
+  }
+  
+  console.log('[elkLayout] Output:', {
+    domainCount: positionedDomains.length,
+    nodeCount: positionedNodes.length,
+    edgeCount: positionedEdges.length,
+    domains: positionedDomains.map(d => ({ id: d.id, pos: d.position })),
+  });
   
   return { domains: positionedDomains, nodes: positionedNodes, edges: positionedEdges };
 }

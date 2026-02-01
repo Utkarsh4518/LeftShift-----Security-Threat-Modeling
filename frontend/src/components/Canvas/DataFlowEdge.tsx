@@ -1,22 +1,30 @@
 /**
- * DataFlowEdge - Smooth step edges that route around domain containers.
+ * DataFlowEdge - Custom edge routing with backbone lane for long-range connections.
  * 
  * Features:
- * - Step routing with rounded corners
- * - Staggered vertical offsets to prevent overlapping
+ * - Adjacent domains: Normal smooth step routing
+ * - Long-range edges: Route through backbone lane above/below domains
+ * - Staggered offsets to prevent overlapping in backbone
  * - Color-coded by edge type
  * - Always-visible protocol labels
  */
 
 import { memo, useMemo } from 'react';
 import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, type Position } from '@xyflow/react';
-import type { EdgeType } from '../../compiler/types';
+import type { EdgeType, RoutingDirection } from '../../compiler/types';
 
 interface DataFlowEdgeData {
   protocol?: string;
   edgeType: EdgeType;
   collapsedCount?: number;
-  edgeIndex?: number; // For staggering overlapping edges
+  edgeIndex?: number;
+  isLongRange?: boolean;
+  routingDirection?: RoutingDirection;
+  domainDistance?: number;
+  domainBounds?: {
+    topY: number;
+    bottomY: number;
+  };
 }
 
 interface DataFlowEdgeProps {
@@ -68,26 +76,108 @@ const EDGE_STYLES: Record<EdgeType, {
   },
 };
 
+/** Backbone routing configuration */
+const BACKBONE_CONFIG = {
+  /** Base offset from domain edge to backbone lane */
+  BASE_OFFSET: 60,
+  /** Additional offset per edge index for staggering */
+  STAGGER_OFFSET: 18,
+  /** Horizontal padding before turning up/down */
+  CORNER_OFFSET: 15,
+  /** Border radius for corners */
+  CORNER_RADIUS: 8,
+};
+
 /**
- * Generate a deterministic offset based on edge ID to stagger overlapping edges.
+ * Generate a custom path for long-range edges through the backbone lane.
+ * 
+ * Path structure:
+ * 1. Horizontal from source
+ * 2. Vertical to backbone lane
+ * 3. Horizontal across backbone
+ * 4. Vertical from backbone to target level
+ * 5. Horizontal to target
  */
-function getStaggerOffset(edgeId: string, edgeIndex?: number): number {
-  // Use edge index if provided, otherwise hash the ID
+function generateBackbonePath(
+  sourceX: number,
+  sourceY: number,
+  targetX: number,
+  targetY: number,
+  direction: RoutingDirection,
+  domainBounds: { topY: number; bottomY: number },
+  edgeIndex: number = 0
+): { path: string; labelX: number; labelY: number } {
+  const { BASE_OFFSET, STAGGER_OFFSET, CORNER_OFFSET, CORNER_RADIUS } = BACKBONE_CONFIG;
+  
+  // Calculate backbone Y position with staggering
+  const staggeredOffset = BASE_OFFSET + (edgeIndex * STAGGER_OFFSET);
+  const backboneY = direction === 'above'
+    ? domainBounds.topY - staggeredOffset
+    : domainBounds.bottomY + staggeredOffset;
+  
+  // Calculate intermediate points
+  const exitX = sourceX + CORNER_OFFSET;
+  const entryX = targetX - CORNER_OFFSET;
+  
+  // Build SVG path with rounded corners
+  // We use quadratic bezier curves (Q) for smooth corners
+  const r = CORNER_RADIUS;
+  
+  let path: string;
+  
+  if (direction === 'above') {
+    // Route above: source → up → across → down → target
+    path = [
+      `M ${sourceX} ${sourceY}`,           // Start at source
+      `L ${exitX - r} ${sourceY}`,          // Horizontal to first corner
+      `Q ${exitX} ${sourceY} ${exitX} ${sourceY - r}`, // Corner up
+      `L ${exitX} ${backboneY + r}`,        // Vertical to backbone
+      `Q ${exitX} ${backboneY} ${exitX + r} ${backboneY}`, // Corner right
+      `L ${entryX - r} ${backboneY}`,       // Horizontal across backbone
+      `Q ${entryX} ${backboneY} ${entryX} ${backboneY + r}`, // Corner down
+      `L ${entryX} ${targetY - r}`,         // Vertical to target level
+      `Q ${entryX} ${targetY} ${entryX + r} ${targetY}`, // Corner right
+      `L ${targetX} ${targetY}`,            // Horizontal to target
+    ].join(' ');
+  } else {
+    // Route below: source → down → across → up → target
+    path = [
+      `M ${sourceX} ${sourceY}`,           // Start at source
+      `L ${exitX - r} ${sourceY}`,          // Horizontal to first corner
+      `Q ${exitX} ${sourceY} ${exitX} ${sourceY + r}`, // Corner down
+      `L ${exitX} ${backboneY - r}`,        // Vertical to backbone
+      `Q ${exitX} ${backboneY} ${exitX + r} ${backboneY}`, // Corner right
+      `L ${entryX - r} ${backboneY}`,       // Horizontal across backbone
+      `Q ${entryX} ${backboneY} ${entryX} ${backboneY - r}`, // Corner up
+      `L ${entryX} ${targetY + r}`,         // Vertical to target level
+      `Q ${entryX} ${targetY} ${entryX + r} ${targetY}`, // Corner right
+      `L ${targetX} ${targetY}`,            // Horizontal to target
+    ].join(' ');
+  }
+  
+  // Label position: middle of the backbone horizontal segment
+  const labelX = (exitX + entryX) / 2;
+  const labelY = backboneY;
+  
+  return { path, labelX, labelY };
+}
+
+/**
+ * Generate a deterministic offset for adjacent edge staggering.
+ */
+function getAdjacentStaggerOffset(edgeId: string, edgeIndex?: number): number {
   if (edgeIndex !== undefined) {
-    // Stagger pattern: 0, 20, -20, 40, -40, etc.
     const sign = edgeIndex % 2 === 0 ? 1 : -1;
-    const magnitude = Math.floor((edgeIndex + 1) / 2) * 20;
+    const magnitude = Math.floor((edgeIndex + 1) / 2) * 15;
     return sign * magnitude;
   }
   
-  // Fallback: hash the edge ID to get a consistent offset
   let hash = 0;
   for (let i = 0; i < edgeId.length; i++) {
     hash = ((hash << 5) - hash) + edgeId.charCodeAt(i);
     hash = hash & hash;
   }
-  // Return offset between -40 and 40
-  return (hash % 5) * 15 - 30;
+  return (hash % 5) * 12 - 24;
 }
 
 function DataFlowEdge({
@@ -101,26 +191,57 @@ function DataFlowEdge({
   data,
   selected,
 }: DataFlowEdgeProps) {
-  // Calculate staggered offset to prevent overlapping edges
-  const staggerOffset = useMemo(() => {
-    return getStaggerOffset(id, data?.edgeIndex);
-  }, [id, data?.edgeIndex]);
+  // Determine if this is a long-range edge requiring backbone routing
+  const isLongRange = data?.isLongRange ?? false;
+  const routingDirection = data?.routingDirection ?? 'above';
+  const domainBounds = data?.domainBounds;
+  const edgeIndex = data?.edgeIndex ?? 0;
   
-  // Base offset + stagger for vertical separation
-  const baseOffset = 30;
-  const totalOffset = baseOffset + staggerOffset;
-  
-  // Use smooth step path - routes around obstacles with right angles
-  const [edgePath, labelX, labelY] = getSmoothStepPath({
+  // Calculate edge path based on routing type
+  const { edgePath, labelX, labelY } = useMemo(() => {
+    if (isLongRange && domainBounds) {
+      // Long-range: use backbone routing
+      const { path, labelX, labelY } = generateBackbonePath(
+        sourceX,
+        sourceY,
+        targetX,
+        targetY,
+        routingDirection,
+        domainBounds,
+        edgeIndex
+      );
+      return { edgePath: path, labelX, labelY };
+    } else {
+      // Adjacent: use standard smooth step with stagger offset
+      const staggerOffset = getAdjacentStaggerOffset(id, edgeIndex);
+      const totalOffset = 25 + staggerOffset;
+      
+      const [path, lx, ly] = getSmoothStepPath({
+        sourceX,
+        sourceY,
+        sourcePosition,
+        targetX,
+        targetY,
+        targetPosition,
+        borderRadius: 12,
+        offset: totalOffset,
+      });
+      
+      return { edgePath: path, labelX: lx, labelY: ly };
+    }
+  }, [
+    isLongRange,
+    routingDirection,
+    domainBounds,
+    edgeIndex,
     sourceX,
     sourceY,
-    sourcePosition,
     targetX,
     targetY,
+    sourcePosition,
     targetPosition,
-    borderRadius: 12,
-    offset: totalOffset,
-  });
+    id,
+  ]);
 
   const edgeType = data?.edgeType || 'secondary';
   const style = EDGE_STYLES[edgeType];
@@ -163,7 +284,7 @@ function DataFlowEdge({
         markerEnd="url(#flowArrow)"
       />
 
-      {/* Protocol/flow label - always visible */}
+      {/* Protocol/flow label */}
       {showLabel && (
         <EdgeLabelRenderer>
           <div
@@ -181,6 +302,7 @@ function DataFlowEdge({
               shadow-md
               whitespace-nowrap
               ${selected ? 'border-orange-500/50' : ''}
+              ${isLongRange ? 'border-dashed' : ''}
             `}
           >
             {protocol && (
