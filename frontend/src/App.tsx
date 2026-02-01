@@ -11,8 +11,10 @@ import { useState, useCallback } from 'react';
 import { ArchitectureCanvas } from './components/Canvas';
 import { ThreatPanel } from './components/ThreatPanel';
 import { ReportPreview } from './components/ReportPreview';
+import { ThreatSelection } from './components/ThreatSelection';
 import { UploadForm, ExampleSelector } from './components/Upload';
 import { ProgressBar } from './components/Progress';
+import StarsBackground from './components/StarsBackground';
 import { useAnalysis } from './hooks';
 import { getExampleAnalysisResult } from './data/examples';
 import type { RenderNode, ExampleArchitecture, AnalysisInput } from './compiler/types';
@@ -88,7 +90,10 @@ export default function App() {
   const projectName = renderGraph?.metadata.projectName || 'Architecture';
 
   return (
-    <div className="min-h-screen bg-slate-900 text-white">
+    <div className="min-h-screen bg-slate-900 text-white relative">
+      {/* Stars Background */}
+      <StarsBackground />
+
       {/* Header - shown in visualization view */}
       {view === 'visualization' && (
         <header className="fixed top-0 left-0 right-0 z-40 bg-slate-800/95 backdrop-blur border-b border-slate-700">
@@ -213,11 +218,11 @@ export default function App() {
 
         {/* Visualization view */}
         {view === 'visualization' && (
-          <div className="h-[calc(100vh-4rem)] relative">
+          <div className="relative">
             {/* Canvas */}
             <div
               className={`
-                h-full transition-all duration-300
+                h-[calc(100vh-4rem)] transition-all duration-300
                 ${selectedNode ? 'mr-96' : ''}
               `}
             >
@@ -231,6 +236,15 @@ export default function App() {
 
             {/* Threat panel */}
             <ThreatPanel node={selectedNode} onClose={() => setSelectedNode(null)} />
+
+            {/* Threat Selection Section */}
+            {result?.threats && result.threats.length > 0 && (
+              <div className="border-t border-slate-700 bg-slate-900 p-6">
+                <div className="container mx-auto max-w-7xl">
+                  <ThreatSelection threats={result.threats} />
+                </div>
+              </div>
+            )}
           </div>
         )}
 
