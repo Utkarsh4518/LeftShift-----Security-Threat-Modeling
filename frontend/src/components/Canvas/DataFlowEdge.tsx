@@ -51,27 +51,30 @@ const EDGE_STYLES: Record<EdgeType, {
 }> = {
   primary: {
     stroke: '#22d3ee', // Cyan-400
-    strokeWidth: 2.5,
-    opacity: 0.95,
-    glow: 'rgba(34, 211, 238, 0.3)',
+    strokeWidth: 3,    // Increased from 2.5
+    opacity: 1.0,       // Full opacity for maximum visibility
+    glow: 'rgba(34, 211, 238, 0.4)', // Increased glow intensity
     dashArray: '8 4',
   },
   control: {
     stroke: '#a78bfa', // Violet-400
-    strokeWidth: 2,
-    opacity: 0.85,
-    glow: 'rgba(167, 139, 250, 0.2)',
+    strokeWidth: 2.5,  // Increased from 2
+    opacity: 1.0,       // Full opacity
+    glow: 'rgba(167, 139, 250, 0.3)', // Increased glow intensity
     dashArray: '4 4',
   },
   secondary: {
-    stroke: '#64748b', // Slate-500
-    strokeWidth: 1.5,
-    opacity: 0.7,
+    stroke: '#cbd5e1', // Slate-300 (much brighter for high visibility)
+    strokeWidth: 2.5,  // Increased from 2
+    opacity: 1.0,       // Full opacity
+    glow: 'rgba(203, 213, 225, 0.25)', // Added glow effect
+    dashArray: '6 4',  // Added for animation effect
   },
   infra: {
-    stroke: '#475569', // Slate-600
-    strokeWidth: 1,
-    opacity: 0.5,
+    stroke: '#94a3b8', // Slate-400 (brighter)
+    strokeWidth: 2.5,   // Increased from 2
+    opacity: 1.0,       // Full opacity
+    glow: 'rgba(148, 163, 184, 0.2)', // Added glow effect
     dashArray: '2 3',
   },
 };
@@ -244,7 +247,12 @@ function DataFlowEdge({
   ]);
 
   const edgeType = data?.edgeType || 'secondary';
-  const style = EDGE_STYLES[edgeType];
+  const style = EDGE_STYLES[edgeType] || {
+    stroke: '#cbd5e1', // Brighter default color
+    strokeWidth: 2.5,
+    opacity: 1.0, // Full opacity
+    glow: 'rgba(203, 213, 225, 0.25)', // Default glow
+  };
   const protocol = data?.protocol;
   const collapsedCount = data?.collapsedCount;
 
@@ -253,17 +261,17 @@ function DataFlowEdge({
 
   return (
     <>
-      {/* Glow effect for highlighted edges */}
+      {/* Glow effect for all edges - improved visibility */}
       {style.glow && (
         <BaseEdge
           id={`${id}-glow`}
           path={edgePath}
           style={{
             stroke: style.glow,
-            strokeWidth: style.strokeWidth + 4,
+            strokeWidth: style.strokeWidth + 5, // Increased glow width
             strokeLinecap: 'round',
-            filter: 'blur(3px)',
-            opacity: selected ? 0.8 : 0.5,
+            filter: 'blur(4px)', // Increased blur for more visible glow
+            opacity: selected ? 0.9 : 0.6, // Increased opacity for better visibility
           }}
         />
       )}
@@ -279,7 +287,9 @@ function DataFlowEdge({
           strokeLinejoin: 'round',
           opacity: selected ? 1 : style.opacity,
           strokeDasharray: style.dashArray,
-          animation: edgeType === 'primary' ? 'flowDash 1.5s linear infinite' : undefined,
+          animation: style.dashArray 
+            ? `flowDash ${edgeType === 'primary' ? '1.5s' : edgeType === 'control' ? '1.8s' : edgeType === 'secondary' ? '2s' : '2.2s'} linear infinite`
+            : undefined,
         }}
         markerEnd="url(#flowArrow)"
       />
