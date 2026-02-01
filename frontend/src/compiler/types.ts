@@ -4,6 +4,7 @@
  * These types define the contract between:
  * 1. Backend Sentinel analysis output
  * 2. Frontend RenderGraph for visualization
+ * 3. Domain-based layout system
  */
 
 // =============================================================================
@@ -81,20 +82,53 @@ export interface SentinelAnalysisResult {
 /** Severity levels for threats */
 export type Severity = 'Critical' | 'High' | 'Medium' | 'Low' | 'None';
 
-/** Lane assignments for component roles */
-export type Lane = 0 | 1 | 2 | 3 | 4;
+/** Lane assignments for component roles (left-to-right) */
+export type Lane = 0 | 1 | 2 | 3 | 4 | 5;
 
 /** Role categories for lane mapping */
-export type ComponentRole = 'external' | 'ingress' | 'compute' | 'data' | 'infra';
+export type ComponentRole = 
+  | 'external'      // Data Sources domain
+  | 'ingress'       // Data Sources domain
+  | 'gateway'       // Gateway domain
+  | 'security'      // Security domain
+  | 'orchestration' // Processing domain
+  | 'compute'       // Processing domain
+  | 'messaging'     // Messaging domain
+  | 'ai'            // AI Services domain
+  | 'data'          // Storage domain
+  | 'analytics'     // Analytics domain
+  | 'monitoring'    // Monitoring domain
+  | 'edge'          // Edge/CDN domain
+  | 'infra';        // Infrastructure domain
+
+/** Domain identifiers for grouping components */
+export type DomainId = 
+  | 'data-sources' 
+  | 'gateway'
+  | 'security'
+  | 'processing' 
+  | 'messaging'
+  | 'ai-services' 
+  | 'storage' 
+  | 'analytics'
+  | 'monitoring'
+  | 'edge'
+  | 'infra';
+
+/** Edge type for visual differentiation */
+export type EdgeType = 'primary' | 'control' | 'secondary' | 'infra';
 
 /** Node in the RenderGraph for visualization */
 export interface RenderNode {
   id: string;
   label: string;
   type: string;
+  role: ComponentRole;
   lane: Lane;
   risk: Severity;
   threats: SentinelThreat[];
+  /** Domain this node belongs to */
+  domainId: DomainId;
 }
 
 /** Edge in the RenderGraph for visualization */
@@ -103,12 +137,40 @@ export interface RenderEdge {
   from: string;
   to: string;
   protocol?: string;
+  edgeType: EdgeType;
+  /** Number of collapsed edges (for infra edges) */
+  collapsedCount?: number;
+  /** Index for staggering overlapping edges */
+  edgeIndex?: number;
+}
+
+/** Domain container for grouping related components */
+export interface Domain {
+  id: DomainId;
+  label: string;
+  icon: string;
+  roles: ComponentRole[];
+  /** Position in the grid (0-4 for 5 domains) */
+  gridPosition: number;
+  /** Computed position after layout */
+  position: { x: number; y: number };
+  /** Computed size based on contained nodes */
+  size: { width: number; height: number };
+  /** Nodes contained in this domain */
+  nodes: RenderNode[];
+  /** Highest severity among contained nodes */
+  maxSeverity: Severity;
 }
 
 /** Complete RenderGraph for React Flow visualization */
 export interface RenderGraph {
+  /** Nodes grouped by domain */
+  domains: Domain[];
+  /** All nodes (flat list for edge routing) */
   nodes: RenderNode[];
+  /** Edges between nodes */
   edges: RenderEdge[];
+  /** Metadata */
   metadata: {
     projectName: string;
     description: string;
@@ -129,6 +191,17 @@ export interface PositionedNode {
   type: 'componentNode';
   position: { x: number; y: number };
   data: RenderNode;
+  parentId?: string; // Domain ID for grouping
+  extent?: 'parent';
+}
+
+/** Positioned domain container for React Flow */
+export interface PositionedDomain {
+  id: string;
+  type: 'domainContainer';
+  position: { x: number; y: number };
+  data: Domain;
+  style?: { width: number; height: number };
 }
 
 /** Positioned edge for React Flow */
@@ -139,6 +212,9 @@ export interface PositionedEdge {
   type: 'dataFlowEdge';
   data: {
     protocol?: string;
+    edgeType: EdgeType;
+    collapsedCount?: number;
+    edgeIndex?: number;
   };
   animated?: boolean;
 }

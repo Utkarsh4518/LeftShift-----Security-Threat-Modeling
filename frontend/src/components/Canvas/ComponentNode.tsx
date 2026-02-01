@@ -1,150 +1,168 @@
 /**
  * ComponentNode - Custom React Flow node for architecture components.
  * 
- * Visual features:
- * - Border color reflects threat severity
- * - Glow effect for Critical/High severity
- * - Lane-based fade-in animation
- * - Click handler for threat panel
+ * Features:
+ * - Compact design with icon, name, and type
+ * - Severity indicator inside node boundaries
+ * - Hover effects for interactivity
  */
 
 import { memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import type { RenderNode, Severity } from '../../compiler/types';
 
-/** Props for the component node */
 interface ComponentNodeProps {
   data: RenderNode;
   selected?: boolean;
 }
 
-/** Severity to color mapping */
-const SEVERITY_COLORS: Record<Severity, string> = {
-  Critical: 'border-red-500',
-  High: 'border-orange-500',
-  Medium: 'border-yellow-500',
-  Low: 'border-green-500',
-  None: 'border-gray-600',
-};
-
-/** Severity to glow class mapping */
-const SEVERITY_GLOW: Record<Severity, string> = {
-  Critical: 'node-glow-critical animate-glow-pulse',
-  High: 'node-glow-high',
-  Medium: '',
-  Low: '',
-  None: '',
-};
-
-/** Severity badge colors */
-const SEVERITY_BADGE: Record<Severity, string> = {
-  Critical: 'bg-red-500 text-white',
-  High: 'bg-orange-500 text-white',
-  Medium: 'bg-yellow-500 text-black',
-  Low: 'bg-green-500 text-white',
-  None: 'bg-gray-600 text-gray-300',
-};
-
-/** Component type icons (simple text for now) */
-function getTypeIcon(type: string): string {
-  const lowerType = type.toLowerCase();
-  if (lowerType.includes('database') || lowerType.includes('db')) return '🗄️';
-  if (lowerType.includes('cache')) return '⚡';
-  if (lowerType.includes('queue') || lowerType.includes('message')) return '📨';
-  if (lowerType.includes('client') || lowerType.includes('browser')) return '🌐';
-  if (lowerType.includes('mobile')) return '📱';
-  if (lowerType.includes('gateway') || lowerType.includes('ingress')) return '🚪';
-  if (lowerType.includes('auth')) return '🔐';
-  if (lowerType.includes('service') || lowerType.includes('microservice')) return '⚙️';
-  if (lowerType.includes('dns')) return '🔍';
-  if (lowerType.includes('load balancer')) return '⚖️';
-  return '📦';
+/**
+ * Get severity-based styling.
+ */
+function getSeverityStyles(severity: Severity): {
+  dotColor: string;
+  borderColor: string;
+  glowClass: string;
+} {
+  switch (severity) {
+    case 'Critical':
+      return {
+        dotColor: 'bg-red-500',
+        borderColor: 'border-red-500/60',
+        glowClass: 'shadow-red-500/30',
+      };
+    case 'High':
+      return {
+        dotColor: 'bg-orange-500',
+        borderColor: 'border-orange-500/60',
+        glowClass: 'shadow-orange-500/30',
+      };
+    case 'Medium':
+      return {
+        dotColor: 'bg-yellow-500',
+        borderColor: 'border-yellow-500/60',
+        glowClass: 'shadow-yellow-500/30',
+      };
+    case 'Low':
+      return {
+        dotColor: 'bg-green-500',
+        borderColor: 'border-green-500/60',
+        glowClass: 'shadow-green-500/30',
+      };
+    default:
+      return {
+        dotColor: '',
+        borderColor: 'border-slate-600',
+        glowClass: '',
+      };
+  }
 }
 
 /**
- * ComponentNode component for React Flow.
+ * Get icon based on component type.
  */
-function ComponentNode({ data, selected }: ComponentNodeProps) {
-  const { label, type, lane, risk, threats } = data;
-  const threatCount = threats.length;
+function getTypeIcon(type: string): string {
+  const lowerType = type.toLowerCase();
   
-  const borderColor = SEVERITY_COLORS[risk];
-  const glowClass = SEVERITY_GLOW[risk];
-  const badgeClass = SEVERITY_BADGE[risk];
+  if (lowerType.includes('database') || lowerType.includes('db') || lowerType.includes('sql')) {
+    return '💾';
+  }
+  if (lowerType.includes('api') || lowerType.includes('gateway')) {
+    return '🔌';
+  }
+  if (lowerType.includes('auth') || lowerType.includes('security')) {
+    return '🔐';
+  }
+  if (lowerType.includes('ai') || lowerType.includes('llm') || lowerType.includes('ml')) {
+    return '🤖';
+  }
+  if (lowerType.includes('client') || lowerType.includes('browser') || lowerType.includes('user')) {
+    return '👤';
+  }
+  if (lowerType.includes('queue') || lowerType.includes('message') || lowerType.includes('kafka')) {
+    return '📨';
+  }
+  if (lowerType.includes('storage') || lowerType.includes('blob') || lowerType.includes('s3')) {
+    return '📦';
+  }
+  if (lowerType.includes('cache') || lowerType.includes('redis')) {
+    return '⚡';
+  }
+  if (lowerType.includes('log') || lowerType.includes('monitor')) {
+    return '📊';
+  }
+  if (lowerType.includes('orchestrat') || lowerType.includes('workflow')) {
+    return '🎯';
+  }
+  
+  // Default: generic service
+  return '⚙️';
+}
+
+const ComponentNode = ({ data, selected }: ComponentNodeProps) => {
+  const { label, type, risk, threats } = data;
+  const styles = getSeverityStyles(risk);
   const icon = getTypeIcon(type);
+  const hasThreat = risk !== 'None';
   
   return (
     <div
       className={`
-        relative px-4 py-3 rounded-lg border-2
-        bg-slate-800 text-slate-100
-        min-w-[160px] max-w-[200px]
+        relative flex items-center gap-2
+        px-3 py-2 rounded-lg
+        bg-slate-800 text-white
+        border ${hasThreat ? styles.borderColor : 'border-slate-600'}
+        ${hasThreat ? 'shadow-lg ' + styles.glowClass : 'shadow-md'}
         transition-all duration-200
-        animate-fade-in lane-${lane}
-        ${borderColor}
-        ${glowClass}
-        ${selected ? 'ring-2 ring-blue-400 ring-offset-2 ring-offset-slate-900' : ''}
-        hover:scale-105 hover:shadow-lg
-        cursor-pointer
+        min-w-[140px] max-w-[160px]
+        ${selected ? 'ring-2 ring-blue-400' : ''}
+        hover:scale-105 hover:shadow-xl
       `}
     >
-      {/* Input handle */}
-      <Handle
-        type="target"
-        position={Position.Left}
-        className="!bg-slate-500 !border-slate-400 !w-3 !h-3"
+      {/* Left handle */}
+      <Handle 
+        type="target" 
+        position={Position.Left} 
+        className="!bg-slate-400 !w-2 !h-2 !border-slate-600" 
       />
       
-      {/* Threat count badge */}
-      {threatCount > 0 && (
-        <div
-          className={`
-            absolute -top-2 -right-2
-            px-2 py-0.5 rounded-full text-xs font-bold
-            ${badgeClass}
-          `}
-        >
-          {threatCount}
-        </div>
-      )}
+      {/* Icon */}
+      <span className="text-base flex-shrink-0">{icon}</span>
       
-      {/* Node content */}
-      <div className="flex items-start gap-2">
-        <span className="text-lg">{icon}</span>
-        <div className="flex-1 min-w-0">
-          <div className="font-medium text-sm truncate" title={label}>
-            {label}
-          </div>
-          <div className="text-xs text-slate-400 truncate" title={type}>
-            {type}
-          </div>
+      {/* Content */}
+      <div className="flex-1 min-w-0 overflow-hidden">
+        <div className="text-xs font-semibold truncate" title={label}>
+          {label}
+        </div>
+        <div className="text-[10px] text-slate-400 truncate" title={type}>
+          {type}
         </div>
       </div>
       
-      {/* Severity indicator */}
-      {risk !== 'None' && (
-        <div className="mt-2 flex items-center gap-1">
+      {/* Severity indicator - positioned inside the node */}
+      {hasThreat && (
+        <div className="flex-shrink-0 flex items-center gap-1">
           <span
             className={`
-              w-2 h-2 rounded-full
-              ${risk === 'Critical' ? 'bg-red-500' : ''}
-              ${risk === 'High' ? 'bg-orange-500' : ''}
-              ${risk === 'Medium' ? 'bg-yellow-500' : ''}
-              ${risk === 'Low' ? 'bg-green-500' : ''}
+              w-2 h-2 rounded-full ${styles.dotColor}
+              ${(risk === 'Critical' || risk === 'High') ? 'animate-pulse' : ''}
             `}
+            title={`${risk} - ${threats.length} threat${threats.length !== 1 ? 's' : ''}`}
           />
-          <span className="text-xs text-slate-400">{risk} Risk</span>
+          <span className="text-[10px] text-slate-400">
+            {threats.length}
+          </span>
         </div>
       )}
       
-      {/* Output handle */}
-      <Handle
-        type="source"
-        position={Position.Right}
-        className="!bg-slate-500 !border-slate-400 !w-3 !h-3"
+      {/* Right handle */}
+      <Handle 
+        type="source" 
+        position={Position.Right} 
+        className="!bg-slate-400 !w-2 !h-2 !border-slate-600" 
       />
     </div>
   );
-}
+};
 
 export default memo(ComponentNode);

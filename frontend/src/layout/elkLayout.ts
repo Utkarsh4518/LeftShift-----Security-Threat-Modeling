@@ -1,174 +1,189 @@
 /**
- * ELK Layout Engine - Deterministic graph layout using Eclipse Layout Kernel.
+ * ELK Layout Engine - Domain-aware graph layout.
  * 
- * Features:
- * - Left-to-right layered layout
- * - Lane-based layer constraints (components in same lane stay together)
- * - Deterministic positioning (stable across reloads)
- * - No force-directed or physics-based layout
+ * Layout strategy:
+ * 1. Place domains on a horizontal grid (left to right)
+ * 2. Layout nodes vertically within each domain with proper spacing
+ * 3. Ensure all nodes fit within their domain containers
  */
 
-import ELK from 'elkjs/lib/elk.bundled.js';
-import type { ElkNode, ElkExtendedEdge } from 'elkjs';
-import type { RenderGraph, PositionedNode, PositionedEdge } from '../compiler/types';
+import type { 
+  RenderGraph, 
+  PositionedNode, 
+  PositionedEdge, 
+  PositionedDomain,
+  RenderNode,
+} from '../compiler/types';
 
-// Initialize ELK instance
-const elk = new ELK();
-
-/** Node dimensions */
-const NODE_WIDTH = 180;
-const NODE_HEIGHT = 60;
-
-/** Spacing configuration */
-const LAYER_SPACING = 150;
-const NODE_SPACING = 40;
-
-/**
- * ELK layout options for deterministic left-to-right layered layout.
- */
-const ELK_OPTIONS = {
-  'elk.algorithm': 'layered',
-  'elk.direction': 'RIGHT',
-  'elk.layered.spacing.nodeNodeBetweenLayers': String(LAYER_SPACING),
-  'elk.layered.spacing.nodeNode': String(NODE_SPACING),
-  'elk.spacing.nodeNode': String(NODE_SPACING),
-  'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
-  'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
-  // Deterministic ordering
-  'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
-  'elk.randomSeed': '1',
+/** Layout configuration */
+const CONFIG = {
+  // Domain dimensions
+  DOMAIN_MIN_WIDTH: 200,
+  DOMAIN_MIN_HEIGHT: 150,
+  DOMAIN_PADDING_X: 20,
+  DOMAIN_PADDING_TOP: 55,    // Space for header
+  DOMAIN_PADDING_BOTTOM: 20,
+  DOMAIN_SPACING: 100,       // INCREASED: More space for edge routing and labels
+  
+  // Node dimensions
+  NODE_WIDTH: 160,
+  NODE_HEIGHT: 50,
+  NODE_SPACING: 16,
+  
+  // Canvas padding
+  CANVAS_PADDING: 50,
 };
 
 /**
- * Convert RenderGraph to ELK graph format.
+ * Calculate the height needed for a domain based on its nodes.
  */
-function toElkGraph(renderGraph: RenderGraph): ElkNode {
-  // Sort nodes by lane for layer assignment
-  const sortedNodes = [...renderGraph.nodes].sort((a, b) => {
-    if (a.lane !== b.lane) return a.lane - b.lane;
-    return a.id.localeCompare(b.id);
-  });
-
-  const elkNodes: ElkNode[] = sortedNodes.map((node) => ({
-    id: node.id,
-    width: NODE_WIDTH,
-    height: NODE_HEIGHT,
-    // Use lane as layer constraint hint
-    layoutOptions: {
-      'elk.layered.layerConstraint': getLaneLayerConstraint(node.lane),
-    },
-  }));
-
-  const elkEdges: ElkExtendedEdge[] = renderGraph.edges.map((edge) => ({
-    id: edge.id,
-    sources: [edge.from],
-    targets: [edge.to],
-  }));
-
-  return {
-    id: 'root',
-    layoutOptions: ELK_OPTIONS,
-    children: elkNodes,
-    edges: elkEdges,
-  };
+function calculateDomainHeight(nodeCount: number): number {
+  if (nodeCount === 0) return CONFIG.DOMAIN_MIN_HEIGHT;
+  
+  const contentHeight = 
+    nodeCount * CONFIG.NODE_HEIGHT + 
+    (nodeCount - 1) * CONFIG.NODE_SPACING;
+  
+  return Math.max(
+    CONFIG.DOMAIN_MIN_HEIGHT,
+    contentHeight + CONFIG.DOMAIN_PADDING_TOP + CONFIG.DOMAIN_PADDING_BOTTOM
+  );
 }
 
 /**
- * Map lane to ELK layer constraint.
- * This helps ELK respect our lane-based ordering.
+ * Calculate node positions within a domain (vertical stack).
  */
-function getLaneLayerConstraint(_lane: number): string {
-  // ELK layer constraints: FIRST, NONE, LAST
-  // We use NONE and let the algorithm respect our node ordering
-  return 'NONE';
+function layoutNodesInDomain(
+  nodes: RenderNode[],
+  domainWidth: number
+): Map<string, { x: number; y: number }> {
+  const positions = new Map<string, { x: number; y: number }>();
+  
+  // Center nodes horizontally, stack vertically
+  const startX = (domainWidth - CONFIG.NODE_WIDTH) / 2;
+  let currentY = CONFIG.DOMAIN_PADDING_TOP;
+  
+  for (const node of nodes) {
+    positions.set(node.id, { x: startX, y: currentY });
+    currentY += CONFIG.NODE_HEIGHT + CONFIG.NODE_SPACING;
+  }
+  
+  return positions;
 }
 
 /**
- * Apply ELK layout to a RenderGraph and return positioned nodes/edges.
+ * Apply domain-based layout to a RenderGraph.
  */
 export async function applyElkLayout(
   renderGraph: RenderGraph
-): Promise<{ nodes: PositionedNode[]; edges: PositionedEdge[] }> {
-  const elkGraph = toElkGraph(renderGraph);
+): Promise<{
+  domains: PositionedDomain[];
+  nodes: PositionedNode[];
+  edges: PositionedEdge[];
+}> {
+  const positionedDomains: PositionedDomain[] = [];
+  const positionedNodes: PositionedNode[] = [];
   
-  // Run ELK layout
-  const layoutedGraph = await elk.layout(elkGraph);
+  let currentX = CONFIG.CANVAS_PADDING;
+  let maxHeight = 0;
   
-  // Create node lookup for positioning
-  const nodeDataMap = new Map(renderGraph.nodes.map((n) => [n.id, n]));
-  const edgeDataMap = new Map(renderGraph.edges.map((e) => [e.id, e]));
+  // First pass: calculate all domain heights to find max
+  for (const domain of renderGraph.domains) {
+    const height = calculateDomainHeight(domain.nodes.length);
+    maxHeight = Math.max(maxHeight, height);
+  }
   
-  // Convert to positioned nodes
-  const positionedNodes: PositionedNode[] = (layoutedGraph.children || []).map((elkNode) => {
-    const nodeData = nodeDataMap.get(elkNode.id);
-    if (!nodeData) {
-      throw new Error(`Node data not found for ${elkNode.id}`);
+  // Second pass: create positioned domains and nodes
+  for (const domain of renderGraph.domains) {
+    const domainWidth = CONFIG.NODE_WIDTH + CONFIG.DOMAIN_PADDING_X * 2;
+    const domainHeight = maxHeight; // Use max height for uniform appearance
+    
+    // Layout nodes within this domain
+    const nodePositions = layoutNodesInDomain(domain.nodes, domainWidth);
+    
+    // Create positioned domain
+    const positionedDomain: PositionedDomain = {
+      id: `domain-${domain.id}`,
+      type: 'domainContainer',
+      position: { x: currentX, y: CONFIG.CANVAS_PADDING },
+      data: {
+        ...domain,
+        size: { width: domainWidth, height: domainHeight },
+      },
+      style: { width: domainWidth, height: domainHeight },
+    };
+    
+    positionedDomains.push(positionedDomain);
+    
+    // Create positioned nodes (positions are relative to domain)
+    for (const node of domain.nodes) {
+      const nodePos = nodePositions.get(node.id);
+      if (nodePos) {
+        const positionedNode: PositionedNode = {
+          id: node.id,
+          type: 'componentNode',
+          position: nodePos,
+          data: node,
+          parentId: `domain-${domain.id}`,
+          extent: 'parent',
+        };
+        positionedNodes.push(positionedNode);
+      }
     }
     
-    return {
-      id: elkNode.id,
-      type: 'componentNode',
-      position: {
-        x: elkNode.x || 0,
-        y: elkNode.y || 0,
-      },
-      data: nodeData,
-    };
-  });
+    currentX += domainWidth + CONFIG.DOMAIN_SPACING;
+  }
   
-  // Convert to positioned edges
-  const positionedEdges: PositionedEdge[] = (layoutedGraph.edges || []).map((elkEdge) => {
-    const edgeData = edgeDataMap.get(elkEdge.id);
-    
-    return {
-      id: elkEdge.id,
-      source: (elkEdge as ElkExtendedEdge).sources[0],
-      target: (elkEdge as ElkExtendedEdge).targets[0],
-      type: 'dataFlowEdge',
-      data: {
-        protocol: edgeData?.protocol,
-      },
-    };
-  });
+  // Create positioned edges with edge indices for staggering
+  const positionedEdges: PositionedEdge[] = renderGraph.edges.map((edge) => ({
+    id: edge.id,
+    source: edge.from,
+    target: edge.to,
+    type: 'dataFlowEdge',
+    data: {
+      protocol: edge.protocol,
+      edgeType: edge.edgeType,
+      collapsedCount: edge.collapsedCount,
+      edgeIndex: edge.edgeIndex,
+    },
+  }));
   
-  return { nodes: positionedNodes, edges: positionedEdges };
+  return { domains: positionedDomains, nodes: positionedNodes, edges: positionedEdges };
 }
 
 /**
  * Get layout dimensions for canvas sizing.
  */
-export function getLayoutBounds(nodes: PositionedNode[]): {
+export function getLayoutBounds(domains: PositionedDomain[]): {
   width: number;
   height: number;
   center: { x: number; y: number };
 } {
-  if (nodes.length === 0) {
+  if (domains.length === 0) {
     return { width: 800, height: 600, center: { x: 400, y: 300 } };
   }
   
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
+  let maxX = 0;
+  let maxY = 0;
   
-  for (const node of nodes) {
-    minX = Math.min(minX, node.position.x);
-    minY = Math.min(minY, node.position.y);
-    maxX = Math.max(maxX, node.position.x + NODE_WIDTH);
-    maxY = Math.max(maxY, node.position.y + NODE_HEIGHT);
+  for (const domain of domains) {
+    const rightEdge = domain.position.x + (domain.style?.width || 200);
+    const bottomEdge = domain.position.y + (domain.style?.height || 200);
+    maxX = Math.max(maxX, rightEdge);
+    maxY = Math.max(maxY, bottomEdge);
   }
   
-  const width = maxX - minX + 100;
-  const height = maxY - minY + 100;
+  const width = maxX + CONFIG.CANVAS_PADDING;
+  const height = maxY + CONFIG.CANVAS_PADDING;
   
   return {
     width,
     height,
     center: {
-      x: (minX + maxX) / 2,
-      y: (minY + maxY) / 2,
+      x: width / 2,
+      y: height / 2,
     },
   };
 }
 
-export { NODE_WIDTH, NODE_HEIGHT };
+export { CONFIG as LAYOUT_CONFIG };

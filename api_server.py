@@ -8,10 +8,17 @@ Provides the /analyze endpoint that:
 """
 
 import os
+import sys
+import io
 import json
 import tempfile
 from datetime import datetime
 from typing import Optional
+
+# Fix Windows console encoding for Unicode characters
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,10 +35,23 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Enable CORS for frontend
+# Enable CORS for frontend (allow multiple ports for dev)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175",
+        "http://localhost:5176",
+        "http://localhost:5177",
+        "http://localhost:5178",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+        "http://127.0.0.1:5175",
+        "http://127.0.0.1:5176",
+        "http://127.0.0.1:5177",
+        "http://127.0.0.1:5178",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

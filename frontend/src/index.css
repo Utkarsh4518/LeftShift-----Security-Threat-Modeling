@@ -20,6 +20,16 @@
   }
 }
 
+/* Animated flow for edges */
+@keyframes flowDash {
+  from {
+    stroke-dashoffset: 24;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
 @keyframes fadeIn {
   0% {
     opacity: 0;
@@ -66,6 +76,7 @@
 .lane-2 { animation-delay: 300ms; }
 .lane-3 { animation-delay: 450ms; }
 .lane-4 { animation-delay: 600ms; }
+.lane-5 { animation-delay: 750ms; }
 
 /* Markdown report styles */
 .markdown-body {

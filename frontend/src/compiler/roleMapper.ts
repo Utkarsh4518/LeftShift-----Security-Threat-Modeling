@@ -1,19 +1,14 @@
 /**
- * Role Mapper - Deterministic lane assignment based on component type.
+ * Role Mapper - Deterministic role and lane assignment based on component type.
  * 
- * Maps component types to lanes for consistent left-to-right layout:
- * - Lane 0 (external): Clients, browsers, mobile apps, users
- * - Lane 1 (ingress): Gateways, load balancers, ingress controllers
- * - Lane 2 (compute): Services, APIs, microservices, backends
- * - Lane 3 (data): Databases, caches, storage systems
- * - Lane 4 (infra): DNS, queues, logging, monitoring
+ * Comprehensive role detection for various architecture patterns.
  */
 
 import type { ComponentRole, Lane } from './types';
 
 /**
  * Keywords for each role category.
- * Order matters - first match wins.
+ * Matched against combined (name + type) in lowercase.
  */
 const ROLE_KEYWORDS: Record<ComponentRole, string[]> = {
   external: [
@@ -22,22 +17,69 @@ const ROLE_KEYWORDS: Record<ComponentRole, string[]> = {
     'mobile',
     'user',
     'external',
-    'app',
     'web browser',
     'mobile app',
+    'smtp',
+    'email server',
+    'inbox',
+    'mailbox',
+    'customer',
+    'admin',
+    'iot',
+    'device',
+    'sensor',
   ],
   ingress: [
     'ingress',
-    'gateway',
-    'route',
-    'load balancer',
-    'cdn',
-    'cloudfront',
-    'nginx',
-    'proxy',
-    'waf',
     'public route',
+    'entry point',
+    'load balancer',
+    'reverse proxy',
+  ],
+  gateway: [
+    'gateway',
     'api gateway',
+    'api management',
+    'apim',
+    'kong',
+    'zuul',
+    'ambassador',
+    'traefik',
+  ],
+  security: [
+    'auth',
+    'authentication',
+    'authorization',
+    'oauth',
+    'oidc',
+    'identity',
+    'iam',
+    'sso',
+    'saml',
+    'jwt',
+    'keycloak',
+    'okta',
+    'waf',
+    'firewall',
+    'security',
+    'vault',
+    'secret',
+    'certificate',
+  ],
+  orchestration: [
+    'master agent',
+    'orchestrat',
+    'workflow',
+    'power automate',
+    'logic app',
+    'logic/ai agent',
+    'step function',
+    'airflow',
+    'n8n',
+    'zapier',
+    'automation',
+    'scheduler',
+    'coordinator',
   ],
   compute: [
     'service',
@@ -56,15 +98,53 @@ const ROLE_KEYWORDS: Record<ComponentRole, string[]> = {
     'processor',
     'web server',
     'app server',
-    'auth',
-    'authentication',
     'order',
     'payment',
     'catalog',
-    'customer',
     'inventory',
     'portal',
     'foundation',
+    'form',
+    'app',
+    'data transfor',
+    'dataflow',
+  ],
+  messaging: [
+    'queue',
+    'message',
+    'rabbitmq',
+    'kafka',
+    'sqs',
+    'sns',
+    'pubsub',
+    'event hub',
+    'event grid',
+    'service bus',
+    'activemq',
+    'nats',
+    'redis pub',
+    'stream',
+  ],
+  ai: [
+    'openai',
+    'azure openai',
+    'llm',
+    'ml model',
+    'ai service',
+    'ai agent',
+    'gpt',
+    'claude',
+    'gemini',
+    'external ai',
+    'pdf processing',
+    'extract & store',
+    'text generation',
+    'embedding',
+    'vector',
+    'cognitive',
+    'machine learning',
+    'neural',
+    'inference',
   ],
   data: [
     'database',
@@ -81,50 +161,123 @@ const ROLE_KEYWORDS: Record<ComponentRole, string[]> = {
     's3',
     'bucket',
     'blob',
-    'data',
+    'sql db',
+    'sql server',
     'warehouse',
     'lake',
+    'dynamo',
+    'cosmos',
+    'cassandra',
+    'neo4j',
+    'graph db',
   ],
-  infra: [
-    'dns',
-    'queue',
-    'message',
-    'logging',
+  analytics: [
+    'analytics',
+    'bi',
+    'business intelligence',
+    'reporting',
+    'dashboard',
+    'tableau',
+    'power bi',
+    'powerbi',
+    'looker',
+    'metabase',
+    'superset',
+    'qlik',
+    'sisense',
+  ],
+  monitoring: [
     'monitoring',
-    'rabbitmq',
-    'kafka',
-    'sqs',
-    'pubsub',
-    'event',
+    'logging',
+    'log',
     'trace',
+    'tracing',
     'metric',
     'prometheus',
     'grafana',
-    'kube dns',
+    'datadog',
+    'new relic',
+    'splunk',
+    'elk',
+    'kibana',
+    'jaeger',
+    'zipkin',
+    'observability',
+    'apm',
+    'application insights',
+  ],
+  edge: [
+    'cdn',
+    'cloudfront',
+    'akamai',
+    'fastly',
+    'cloudflare',
+    'edge',
+    'edge computing',
+    'lambda@edge',
+    'cloudflare workers',
+  ],
+  infra: [
+    'dns',
     'coredns',
+    'kube dns',
+    'route53',
+    'terraform',
+    'ansible',
+    'kubernetes',
+    'docker',
+    'container registry',
+    'acr',
+    'ecr',
+    'gcr',
   ],
 };
 
-/** Lane mapping for each role */
+/** 
+ * Role matching priority order.
+ * Earlier roles take precedence when multiple keywords match.
+ */
+const ROLE_PRIORITY: ComponentRole[] = [
+  'external',
+  'ingress',
+  'gateway',
+  'security',
+  'orchestration',
+  'ai',
+  'messaging',
+  'data',
+  'analytics',
+  'monitoring',
+  'edge',
+  'infra',
+  'compute', // Default fallback - checked last
+];
+
+/** Lane mapping for each role (for left-to-right ordering) */
 const ROLE_TO_LANE: Record<ComponentRole, Lane> = {
   external: 0,
-  ingress: 1,
+  ingress: 0,
+  gateway: 1,
+  security: 1,
+  orchestration: 2,
   compute: 2,
-  data: 3,
-  infra: 4,
+  messaging: 3,
+  ai: 3,
+  data: 4,
+  analytics: 5,
+  monitoring: 5,
+  edge: 0,
+  infra: 5,
 };
 
 /**
  * Determine the role of a component based on its name and type.
- * Uses keyword matching with priority ordering.
  */
 export function getComponentRole(name: string, type: string): ComponentRole {
   const combined = `${name} ${type}`.toLowerCase();
 
   // Check each role in priority order
-  const roleOrder: ComponentRole[] = ['external', 'ingress', 'data', 'infra', 'compute'];
-  
-  for (const role of roleOrder) {
+  for (const role of ROLE_PRIORITY) {
     const keywords = ROLE_KEYWORDS[role];
     for (const keyword of keywords) {
       if (combined.includes(keyword.toLowerCase())) {
@@ -139,7 +292,6 @@ export function getComponentRole(name: string, type: string): ComponentRole {
 
 /**
  * Get the lane number for a component.
- * Lanes determine horizontal position in the diagram.
  */
 export function getLane(name: string, type: string): Lane {
   const role = getComponentRole(name, type);
@@ -151,11 +303,19 @@ export function getLane(name: string, type: string): Lane {
  */
 export function getLaneInfo(lane: Lane): { label: string; description: string } {
   const laneInfo: Record<Lane, { label: string; description: string }> = {
-    0: { label: 'External', description: 'Clients and external users' },
-    1: { label: 'Ingress', description: 'Entry points and gateways' },
-    2: { label: 'Compute', description: 'Services and processing' },
-    3: { label: 'Data', description: 'Databases and storage' },
-    4: { label: 'Infrastructure', description: 'Supporting systems' },
+    0: { label: 'External', description: 'Clients and entry points' },
+    1: { label: 'Gateway', description: 'API and security gateways' },
+    2: { label: 'Processing', description: 'Compute and orchestration' },
+    3: { label: 'Services', description: 'AI and messaging' },
+    4: { label: 'Data', description: 'Databases and storage' },
+    5: { label: 'Operations', description: 'Analytics and monitoring' },
   };
   return laneInfo[lane];
+}
+
+/**
+ * Check if a role is considered "shared infrastructure" (many edges point to it).
+ */
+export function isSharedInfraRole(role: ComponentRole): boolean {
+  return role === 'ai' || role === 'infra' || role === 'data' || role === 'monitoring';
 }

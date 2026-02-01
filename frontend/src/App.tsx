@@ -12,6 +12,7 @@ import { ArchitectureCanvas } from './components/Canvas';
 import { ThreatPanel } from './components/ThreatPanel';
 import { ReportPreview } from './components/ReportPreview';
 import { UploadForm, ExampleSelector } from './components/Upload';
+import { ProgressBar } from './components/Progress';
 import { useAnalysis } from './hooks';
 import { getExampleAnalysisResult } from './data/examples';
 import type { RenderNode, ExampleArchitecture, AnalysisInput } from './compiler/types';
@@ -25,8 +26,10 @@ export default function App() {
 
   const {
     state,
+    stage,
     result,
     renderGraph,
+    positionedDomains,
     positionedNodes,
     positionedEdges,
     analyze,
@@ -219,6 +222,7 @@ export default function App() {
               `}
             >
               <ArchitectureCanvas
+                domains={positionedDomains}
                 nodes={positionedNodes}
                 edges={positionedEdges}
                 onNodeSelect={handleNodeSelect}
@@ -239,15 +243,25 @@ export default function App() {
           </div>
         )}
 
-        {/* Loading overlay */}
+        {/* Loading overlay with progress bar */}
         {isLoading && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm">
-            <div className="flex flex-col items-center gap-4">
-              <div className="w-16 h-16 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
-              <p className="text-lg font-medium text-white">
-                {state.status === 'uploading' ? 'Uploading...' : 'Analyzing architecture...'}
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/95 backdrop-blur-sm">
+            <div className="w-full max-w-2xl px-8">
+              {/* Logo */}
+              <div className="text-center mb-8">
+                <h1 className="text-3xl font-bold text-white">
+                  Left<span className="text-blue-400">&lt;&lt;</span>Shift
+                </h1>
+                <p className="text-slate-400 mt-2">Security Threat Modeling</p>
+              </div>
+
+              {/* Progress bar */}
+              <ProgressBar currentStage={stage} />
+
+              {/* Estimated time */}
+              <p className="text-center text-sm text-slate-500 mt-8">
+                Full analysis typically takes 30-60 seconds
               </p>
-              <p className="text-sm text-slate-400">This may take a minute</p>
             </div>
           </div>
         )}
