@@ -152,24 +152,32 @@ function classifyEdge(
 }
 
 /**
- * Calculate edge index for staggering based on shared target node.
- * Edges going to the same target get different indices.
+ * Calculate edge index for staggering based on source-target pairs.
+ * Edges between the same components (same source AND target) get different indices.
+ * This prevents overlapping when multiple connections exist between the same components.
  */
 function assignEdgeIndices(edges: RenderEdge[]): void {
-  // Group edges by target
-  const edgesByTarget = new Map<string, RenderEdge[]>();
+  // Group edges by source-target pair (for edges between same components)
+  const edgesByPair = new Map<string, RenderEdge[]>();
   
   for (const edge of edges) {
-    const targetKey = normalizeId(edge.to);
-    const existing = edgesByTarget.get(targetKey) || [];
+    // Create a key from both source and target
+    const pairKey = `${normalizeId(edge.from)}->${normalizeId(edge.to)}`;
+    const existing = edgesByPair.get(pairKey) || [];
     existing.push(edge);
-    edgesByTarget.set(targetKey, existing);
+    edgesByPair.set(pairKey, existing);
   }
   
-  // Assign indices within each group
-  for (const targetEdges of edgesByTarget.values()) {
-    targetEdges.forEach((edge, index) => {
+  // Assign indices within each group (edges between same components)
+  for (const pairEdges of edgesByPair.values()) {
+    // Sort by protocol for consistent ordering
+    pairEdges.sort((a, b) => (a.protocol || '').localeCompare(b.protocol || ''));
+    
+    const totalCount = pairEdges.length;
+    pairEdges.forEach((edge, index) => {
       edge.edgeIndex = index;
+      // Store total count for proper centering in stagger calculation
+      (edge as any).totalEdgesInPair = totalCount;
     });
   }
 }
@@ -304,10 +312,12 @@ export function compileDiagram(analysisResult: SentinelAnalysisResult): RenderGr
       continue;
     }
 
-    // Create unique edge ID using actual node IDs (not flow names)
-    const edgeId = createEdgeId(sourceNode.id, targetNode.id);
+    // Create unique edge ID using actual node IDs and protocol (allow multiple edges between same components)
+    const edgeId = flow.protocol 
+      ? `${createEdgeId(sourceNode.id, targetNode.id)} (${flow.protocol})`
+      : createEdgeId(sourceNode.id, targetNode.id);
     
-    // Skip duplicates
+    // Skip exact duplicates (same source, target, and protocol)
     if (edgeSet.has(edgeId)) {
       continue;
     }

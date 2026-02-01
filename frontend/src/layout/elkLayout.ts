@@ -182,6 +182,7 @@ export async function applyElkLayout(
         routingDirection: edge.routingDirection,
         domainDistance: edge.domainDistance,
         domainBounds,
+        totalEdgesInPair: (edge as any).totalEdgesInPair, // Pass through for stagger calculation
       },
     });
   }

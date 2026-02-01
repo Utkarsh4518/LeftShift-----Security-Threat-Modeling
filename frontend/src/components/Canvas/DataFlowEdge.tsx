@@ -25,6 +25,7 @@ interface DataFlowEdgeData {
     topY: number;
     bottomY: number;
   };
+  totalEdgesInPair?: number; // Total edges between same source-target pair
 }
 
 interface DataFlowEdgeProps {
@@ -86,7 +87,7 @@ const BACKBONE_CONFIG = {
   /** Additional offset per edge index for staggering */
   STAGGER_OFFSET: 18,
   /** Horizontal padding before turning up/down */
-  CORNER_OFFSET: 15,
+  CORNER_OFFSET: 30,  // Increased from 15px to keep curves away from domain boundaries
   /** Border radius for corners */
   CORNER_RADIUS: 8,
 };
@@ -167,20 +168,36 @@ function generateBackbonePath(
 
 /**
  * Generate a deterministic offset for adjacent edge staggering.
+ * Ensures edges between the same components are properly spaced.
  */
-function getAdjacentStaggerOffset(edgeId: string, edgeIndex?: number): number {
+function getAdjacentStaggerOffset(edgeId: string, edgeIndex?: number, totalEdgesBetweenSamePair?: number): number {
+  // If we have edgeIndex, use it for proper staggering
   if (edgeIndex !== undefined) {
-    const sign = edgeIndex % 2 === 0 ? 1 : -1;
-    const magnitude = Math.floor((edgeIndex + 1) / 2) * 15;
-    return sign * magnitude;
+    // For multiple edges between same components, stagger them vertically
+    // Center the first edge (index 0) and alternate above/below for others
+    if (totalEdgesBetweenSamePair && totalEdgesBetweenSamePair > 1) {
+      // Multiple edges: center them around 0
+      const centerIndex = Math.floor((totalEdgesBetweenSamePair - 1) / 2);
+      const offsetFromCenter = edgeIndex - centerIndex;
+      return offsetFromCenter * 30; // 30px spacing between edges
+    } else {
+      // Single edge: use small hash-based offset to avoid overlap
+      let hash = 0;
+      for (let i = 0; i < edgeId.length; i++) {
+        hash = ((hash << 5) - hash) + edgeId.charCodeAt(i);
+        hash = hash & hash;
+      }
+      return (hash % 3) * 15 - 15; // Small offset between -15 and +15
+    }
   }
   
+  // Fallback: use hash-based offset
   let hash = 0;
   for (let i = 0; i < edgeId.length; i++) {
     hash = ((hash << 5) - hash) + edgeId.charCodeAt(i);
     hash = hash & hash;
   }
-  return (hash % 5) * 12 - 24;
+  return (hash % 3) * 15 - 15;
 }
 
 function DataFlowEdge({
@@ -216,8 +233,9 @@ function DataFlowEdge({
       return { edgePath: path, labelX, labelY };
     } else {
       // Adjacent: use standard smooth step with stagger offset
-      const staggerOffset = getAdjacentStaggerOffset(id, edgeIndex);
-      const totalOffset = 25 + staggerOffset;
+      const totalEdgesInPair = data?.totalEdgesInPair;
+      const staggerOffset = getAdjacentStaggerOffset(id, edgeIndex, totalEdgesInPair);
+      const totalOffset = 40 + staggerOffset;  // Increased from 25px to keep curves away from domains
       
       const [path, lx, ly] = getSmoothStepPath({
         sourceX,
