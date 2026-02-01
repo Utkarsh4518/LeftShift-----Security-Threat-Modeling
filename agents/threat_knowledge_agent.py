@@ -112,14 +112,36 @@ Each threat:
 - category: One of [Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, Elevation of Privilege]
 - description: 2-3 sentences with technical specifics
 - affected_component: Exact component name from input
-- severity: Use calibration above - distribute realistically
+- severity: Use calibration above - distribute realistically (Critical 10%, High 25%, Medium 45%, Low 20%)
 - mitigation_steps: Array of 2-4 SPECIFIC, ACTIONABLE steps
 - preconditions: Array of SPECIFIC requirements for this attack
 - impact: Concrete business/technical impact
 - cwe_id: SPECIFIC CWE (not generic CWE-20, CWE-693)
 - example: One concrete attack scenario
+- impact_category: REQUIRED - One of:
+  * "Server Compromise" - RCE, full system access, container escape
+  * "Data Compromise" - Data theft, modification, PII exposure
+  * "Availability Impact" - DoS, resource exhaustion
+  * "User-Level Impact" - XSS, session hijacking, CSRF
+- assumptions: Array of conditions that must be true for this threat (e.g., "Assuming default configuration", "Assuming no WAF", "Assuming feature X is enabled")
+- attack_complexity: One of "Low" (no special conditions), "Medium" (some conditions), "High" (many conditions/chained)
 
 **DO NOT set related_cve_id** - CVE mapping happens separately.
+
+## SEVERITY vs IMPACT CALIBRATION:
+
+Match severity to impact_category:
+- Server Compromise threats: Can be Critical/High
+- Data Compromise threats: Typically High/Medium
+- Availability Impact threats: Typically Medium (unless critical service)
+- User-Level Impact threats: Typically Medium/Low
+
+Examples:
+- RCE via deserialization → Server Compromise, Critical
+- SQL injection → Data Compromise, High
+- ReDoS → Availability Impact, Medium
+- Reflected XSS → User-Level Impact, Medium
+- XSS requiring admin to click → User-Level Impact, Low
 
 Each weakness:
 - weakness_id: W-001, etc.
@@ -250,10 +272,17 @@ def _create_threat_output_schema() -> dict:
                         "impact": {"type": "string"},
                         "example": {"type": "string"},
                         "cwe_id": {"type": "string"},
-                        "related_cve_id": {"type": "string"}
+                        "related_cve_id": {"type": "string"},
+                        "impact_category": {"type": "string"},
+                        "assumptions": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        },
+                        "attack_complexity": {"type": "string"}
                     },
                     "required": ["threat_id", "category", "description", 
-                                "affected_component", "severity", "cwe_id"]
+                                "affected_component", "severity", "cwe_id",
+                                "impact_category"]
                 }
             },
             "weaknesses": {
@@ -638,26 +667,27 @@ Return a JSON object with "corrections" array containing only items that need up
         threats = []
         threat_id = 1
         
-        # Generate basic STRIDE threats for each component
+        # Generate basic STRIDE threats for each component with impact categories
+        # Format: (category, desc, cwe, impact_category, severity, attack_complexity)
         stride_templates = [
-            ("Spoofing", "Authentication bypass or identity spoofing", "CWE-287"),
-            ("Tampering", "Unauthorized data modification", "CWE-345"),
-            ("Repudiation", "Insufficient logging and monitoring", "CWE-778"),
-            ("Information Disclosure", "Sensitive data exposure", "CWE-200"),
-            ("Denial of Service", "Resource exhaustion attack", "CWE-400"),
-            ("Elevation of Privilege", "Unauthorized privilege escalation", "CWE-269"),
+            ("Spoofing", "Authentication bypass or identity spoofing", "CWE-287", "Data Compromise", "High", "Medium"),
+            ("Tampering", "Unauthorized data modification", "CWE-345", "Data Compromise", "Medium", "Medium"),
+            ("Repudiation", "Insufficient logging and monitoring", "CWE-778", "Data Compromise", "Low", "Low"),
+            ("Information Disclosure", "Sensitive data exposure", "CWE-200", "Data Compromise", "Medium", "Low"),
+            ("Denial of Service", "Resource exhaustion attack", "CWE-400", "Availability Impact", "Medium", "Low"),
+            ("Elevation of Privilege", "Unauthorized privilege escalation", "CWE-269", "Server Compromise", "High", "Medium"),
         ]
         
         for comp in inferred_components[:5]:  # Limit to first 5 components
             comp_name = comp.get("component_name", "Unknown")
             
-            for category, desc, cwe in stride_templates:
+            for category, desc, cwe, impact_cat, severity, complexity in stride_templates:
                 threats.append(ArchitecturalThreat(
                     threat_id=f"T-{threat_id:03d}",
                     category=category,
                     description=f"{desc} affecting {comp_name}",
                     affected_component=comp_name,
-                    severity="Medium",
+                    severity=severity,
                     mitigation_steps=[
                         "Implement security controls",
                         "Follow security best practices",
@@ -665,7 +695,10 @@ Return a JSON object with "corrections" array containing only items that need up
                     ],
                     preconditions=["Attacker has network access"],
                     impact=f"Potential {category.lower()} impact on {comp_name}",
-                    cwe_id=cwe
+                    cwe_id=cwe,
+                    impact_category=impact_cat,
+                    assumptions=["Assuming default configuration", "Assuming component is reachable"],
+                    attack_complexity=complexity
                 ))
                 threat_id += 1
         

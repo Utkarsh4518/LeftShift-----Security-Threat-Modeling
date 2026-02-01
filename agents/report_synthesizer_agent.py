@@ -74,48 +74,101 @@ REPORT_SYSTEM_INSTRUCTION = """You are a Security Report Synthesizer generating 
    - Use the exact same IDs throughout the report
    - No contradictions between sections
    - Counts must match the actual input data
-   - If input has 28 CVEs, report must reference exactly 28 CVEs (no more, no less)
 
-## REPORT STRUCTURE (12 Sections):
+5. **SEVERITY CONTEXTUALIZATION**
+   - When discussing severity, always mention the impact_category if available
+   - Distinguish between "Server Compromise" (most severe), "Data Compromise", "Availability Impact", and "User-Level Impact"
+   - A HIGH severity DoS is different from a HIGH severity RCE - make this clear
+
+## REPORT STRUCTURE (13 Sections):
 
 Generate a Markdown report with these sections:
 
 ### 1. EXECUTIVE SUMMARY
 - Project name and description
 - Total threats, CVEs, and weaknesses found
-- Overall risk assessment (based on severity counts)
+- Overall risk assessment (based on severity AND impact categories)
 - Top 3 priority actions
+- **Summarize by impact category**: X Server Compromise, Y Data Compromise, Z Availability, W User-Level
 
-### 2. ARCHITECTURE EXTRACTION
+### 2. METHODOLOGY AND ASSUMPTIONS
+**THIS SECTION IS CRITICAL - Always include it.**
+
+Document ALL assumptions made during the analysis:
+- List assumptions from the input data (check threat.assumptions and cve.assumptions fields)
+- If no explicit assumptions provided, infer reasonable ones like:
+  - "Assuming default configuration for all components"
+  - "Assuming no WAF or additional security layers unless specified"
+  - "Assuming components are reachable from the network"
+  - "Assuming versions are current but not specifically patched"
+  
+Format as a clear bulleted list under categories:
+- **Configuration Assumptions**: (e.g., "DEBUG=False in production", "File uploads enabled")
+- **Deployment Assumptions**: (e.g., "Linux deployment", "Containerized environment")
+- **Security Control Assumptions**: (e.g., "No WAF in place", "TLS for external traffic")
+- **Version Assumptions**: (e.g., "Vulnerable versions may be deployed unless patched")
+
+### 3. ARCHITECTURE EXTRACTION
 - **Components List**: Table of all components with type
 - **Data Flows**: Table showing source, destination, protocol
 - **Trust Boundaries**: List of identified trust boundaries
 
-### 3. COMPONENT INVENTORY TABLE
+### 4. COMPONENT INVENTORY TABLE
 | Component | Type | Inferred Technology | Criticality | Notes |
 
-Criticality based on:
-- High: Database, Auth service, API Gateway
-- Medium: Application servers, caches
-- Low: CDN, static content
+**CRITICAL DATA MAPPING - DO NOT MIX UP COLUMNS:**
+For each component in the "inferred_components" array:
+- **Component**: Use the "component_name" or "name" field
+- **Type**: Use the "type" field (e.g., "Database", "Server", "API")
+- **Inferred Technology**: Use the FIRST item from "inferred_product_categories" array
+  - Example: if inferred_product_categories = ["PostgreSQL", "MySQL"], use "PostgreSQL"
+  - If the array contains the component name itself (e.g., ["REST API"]), use that
+  - If the array is ["Generic"], use "Generic"
+  - NEVER put a different component's name in this column
+- **Criticality**: Based on component role (see below)
+- **Notes**: Brief context about the component
 
-### 4. STRIDE THREAT ENUMERATION
-| Threat ID | STRIDE Category | CWE ID | Affected Component | Description | Severity | Mitigation Steps |
+Criticality based on component TYPE and ROLE:
+- High: Database, Auth service, API Gateway, Primary data stores
+- Medium: Application servers, caches, message queues, backend services
+- Low: CDN, static content, logging, monitoring
 
-Include ALL threats from input - do not add or remove any.
+**COMMON MISTAKES TO AVOID:**
+- DO NOT put "REST API (Django + Piston App)" as inferred tech for "Database 1"
+- DO NOT confuse component names with their inferred technology
+- Each row's "Inferred Technology" must come from THAT component's inferred_product_categories
 
-### 5. ARCHITECTURAL WEAKNESSES
+### 5. STRIDE THREAT ENUMERATION
+| Threat ID | STRIDE Category | CWE ID | Affected Component | Description | Severity | Impact Category | Mitigation Steps |
+
+**IMPORTANT CHANGES:**
+- Include impact_category column to distinguish threat types
+- Group threats by impact_category in narrative: "Server Compromise Threats", "Data Compromise Threats", etc.
+- Include ALL threats from input - do not add or remove any
+
+### 6. ARCHITECTURAL WEAKNESSES
 | Weakness ID | Title | Description | Impact | Recommended Mitigation |
 
 Include ALL weaknesses from input.
 
-### 6. CVE DISCOVERY RESULTS
-For each CVE from the input "cves" array:
-- CVE ID (MUST be from input), Severity, CVSS Score
-- Affected Products (from input data)
-- Summary (from input data - do not rewrite)
-- Is Actively Exploited (CISA KEV status from input)
-- Relevance assessment and prerequisites (from input)
+### 7. CVE DISCOVERY RESULTS (GROUPED BY CLASS)
+
+**CRITICAL: Group CVEs by vulnerability_class, not as a flat list.**
+
+For each vulnerability class (e.g., "Input Parsing DoS", "Serialization RCE"):
+1. Show the vulnerability class name as a subheading
+2. List the REPRESENTATIVE CVE(s) in detail (where is_representative=true)
+3. Summarize additional CVEs in that class: "Plus X additional CVEs in this class"
+
+Format:
+#### [Vulnerability Class Name]
+**Representative CVE:** CVE-XXXX-YYYY (Severity, CVSS)
+- Summary
+- Impact Category: [from input]
+- Assumptions: [list from input]
+- Prerequisites: [from input]
+
+*Additional CVEs in this class:* CVE-A, CVE-B, CVE-C (brief one-liner each)
 
 **IF NO CVEs IN INPUT:**
 If the "cves" array is empty or not provided, write:
@@ -126,13 +179,7 @@ If the "cves" array is empty or not provided, write:
 
 To enable CVE discovery, provide specific software versions deployed on each component."
 
-**ABSOLUTE RULES:**
-- List ONLY CVEs that exist in the input "cves" array
-- Do not add any CVE IDs not in the input
-- Do not remove any CVEs from the input
-- The CVE count in this section must match input exactly
-
-### 7. THREAT ↔ CVE CORRELATION MATRIX
+### 8. THREAT ↔ CVE CORRELATION MATRIX
 | Threat ID | Related CVE | Relationship Type | Notes |
 
 **ABSOLUTE RULES FOR THIS SECTION - VIOLATION = FAILURE:**
@@ -144,25 +191,32 @@ To enable CVE discovery, provide specific software versions deployed on each com
 - If zero valid mappings exist, write: "No direct Threat-CVE correlations exist. STRIDE threats are architecture-derived, not CVE-derived."
 - Relationship Type must be: "CVE Promoted to Threat" for threats created from CVEs
 
-### 8. ATTACK PATH SIMULATIONS
+### 9. ATTACK PATH SIMULATIONS
+
+**CRITICAL: Include detailed attack paths. This section significantly improves report quality.**
+
 For each attack path in input:
-- Path ID and Name
-- Description
-- Impact and Likelihood
-- Step-by-step attack sequence
-- Referenced threats and CVEs
+1. **Path Name and ID** as heading
+2. **Attack Narrative**: 2-3 paragraph description of the attack scenario
+3. **Step-by-Step Breakdown**:
+   - Step 1: [Action] → [Target Component] → [Technique] → [Outcome]
+   - Step 2: ...
+4. **Referenced Threats**: Link to specific threat IDs
+5. **Referenced CVEs**: Link to specific CVE IDs
+6. **Impact**: Business and technical impact
+7. **Likelihood**: With justification
 
-Only include attack paths from input data.
+If no attack paths in input, generate a note: "No attack paths were generated for this architecture."
 
-### 9. COMPONENT SECURITY PROFILES
+### 10. COMPONENT SECURITY PROFILES
 For each component:
-- Threat count affecting this component
+- Threat count affecting this component (grouped by impact category)
 - CVE count affecting this component
 - Risk level (Critical/High/Medium/Low)
 - Key vulnerabilities
 - Priority mitigations
 
-### 10. NIST 800-53 CONTROL MAPPING
+### 11. NIST 800-53 CONTROL MAPPING
 | Risk Area | Threat ID(s) | Recommended NIST Control | Control Family | Rationale |
 
 Map threats to appropriate NIST 800-53 controls:
@@ -174,7 +228,7 @@ Map threats to appropriate NIST 800-53 controls:
 - SC (System and Communications Protection)
 - SI (System and Information Integrity)
 
-### 11. HARDENING PLAN
+### 12. HARDENING PLAN
 Organize mitigations by timeline:
 
 **Quick Wins (< 1 day)**
@@ -191,10 +245,11 @@ Organize mitigations by timeline:
 - Major security implementations
 - Process improvements
 
-### 12. APPENDIX
+### 13. APPENDIX
 - Report generation timestamp
 - Data sources used
 - Methodology notes
+- List of all assumptions consolidated
 
 ## OUTPUT FORMAT:
 - Clean, valid Markdown
@@ -318,6 +373,87 @@ class ReportSynthesizerAgent:
             
             return None
     
+    def _consolidate_assumptions(self, assumptions: List[str]) -> List[str]:
+        """
+        Consolidate and deduplicate similar assumptions.
+        
+        This:
+        1. Removes exact duplicates
+        2. Merges similar assumptions (e.g., "File uploads enabled" variants)
+        3. Groups related assumptions
+        4. Limits total count to prevent bloat
+        
+        Returns:
+            Consolidated list of unique assumptions
+        """
+        if not assumptions:
+            return []
+        
+        # Normalize and deduplicate
+        seen_normalized = set()
+        unique_assumptions = []
+        
+        for assumption in assumptions:
+            # Normalize for comparison
+            normalized = assumption.lower().strip()
+            
+            # Skip if we've seen something very similar
+            is_duplicate = False
+            for seen in seen_normalized:
+                # Check for substring matches (one contains the other)
+                if normalized in seen or seen in normalized:
+                    is_duplicate = True
+                    break
+                # Check for high similarity (same key words)
+                norm_words = set(normalized.split())
+                seen_words = set(seen.split())
+                if len(norm_words & seen_words) >= min(len(norm_words), len(seen_words)) * 0.7:
+                    is_duplicate = True
+                    break
+            
+            if not is_duplicate:
+                seen_normalized.add(normalized)
+                unique_assumptions.append(assumption)
+        
+        # Group similar assumptions by category
+        categories = {
+            "config": [],    # Configuration assumptions
+            "deploy": [],    # Deployment assumptions
+            "security": [],  # Security control assumptions
+            "access": [],    # Access/privilege assumptions
+            "version": [],   # Version assumptions
+            "other": []      # Other
+        }
+        
+        for assumption in unique_assumptions:
+            lower = assumption.lower()
+            
+            if any(x in lower for x in ["config", "setting", "enabled", "disabled", "default"]):
+                categories["config"].append(assumption)
+            elif any(x in lower for x in ["deploy", "windows", "linux", "container", "environment"]):
+                categories["deploy"].append(assumption)
+            elif any(x in lower for x in ["waf", "firewall", "tls", "ssl", "encrypt", "auth"]):
+                categories["security"].append(assumption)
+            elif any(x in lower for x in ["access", "privilege", "permission", "credential", "sql execution"]):
+                categories["access"].append(assumption)
+            elif any(x in lower for x in ["version", "patch", "upgrade", "vulnerable"]):
+                categories["version"].append(assumption)
+            else:
+                categories["other"].append(assumption)
+        
+        # Rebuild list with category grouping, limited per category
+        MAX_PER_CATEGORY = 5
+        MAX_TOTAL = 20
+        
+        consolidated = []
+        for cat_name in ["access", "config", "security", "deploy", "version", "other"]:
+            cat_items = categories[cat_name][:MAX_PER_CATEGORY]
+            consolidated.extend(cat_items)
+            if len(consolidated) >= MAX_TOTAL:
+                break
+        
+        return consolidated[:MAX_TOTAL]
+    
     def synthesize_report_data(
         self,
         architecture: ArchitectureSchema,
@@ -341,6 +477,38 @@ class ReportSynthesizerAgent:
         Returns:
             Structured data dictionary for report generation
         """
+        # Collect all assumptions from threats and CVEs
+        all_assumptions = set()
+        for t in threats:
+            if hasattr(t, 'assumptions') and t.assumptions:
+                all_assumptions.update(t.assumptions)
+        for c in cves:
+            if hasattr(c, 'assumptions') and c.assumptions:
+                all_assumptions.update(c.assumptions)
+        
+        # Consolidate and deduplicate similar assumptions
+        all_assumptions = self._consolidate_assumptions(list(all_assumptions))
+        
+        # Group CVEs by vulnerability class
+        cve_classes: Dict[str, List] = {}
+        for c in cves:
+            vuln_class = getattr(c, 'vulnerability_class', None) or "Unclassified"
+            if vuln_class not in cve_classes:
+                cve_classes[vuln_class] = []
+            cve_classes[vuln_class].append(c.cve_id if hasattr(c, 'cve_id') else c.get('cve_id', 'Unknown'))
+        
+        # Count threats by impact category
+        threat_by_impact: Dict[str, int] = {}
+        for t in threats:
+            impact_cat = getattr(t, 'impact_category', None) or "Unclassified"
+            threat_by_impact[impact_cat] = threat_by_impact.get(impact_cat, 0) + 1
+        
+        # Count CVEs by impact category
+        cve_by_impact: Dict[str, int] = {}
+        for c in cves:
+            impact_cat = getattr(c, 'impact_category', None) or "Unclassified"
+            cve_by_impact[impact_cat] = cve_by_impact.get(impact_cat, 0) + 1
+        
         return {
             "project_name": architecture.project_name,
             "project_description": architecture.description,
@@ -369,7 +537,13 @@ class ReportSynthesizerAgent:
                 "critical_cves": sum(1 for c in cves if c.severity == "CRITICAL"),
                 "high_cves": sum(1 for c in cves if c.severity == "HIGH"),
                 "actively_exploited": sum(1 for c in cves if c.is_actively_exploited),
+                # New stats for improved reporting
+                "threats_by_impact": threat_by_impact,
+                "cves_by_impact": cve_by_impact,
+                "cve_vulnerability_classes": cve_classes,
+                "representative_cves": sum(1 for c in cves if getattr(c, 'is_representative', False)),
             },
+            "all_assumptions": all_assumptions,  # Already consolidated and deduplicated
             "generation_timestamp": datetime.now().isoformat()
         }
     
@@ -405,6 +579,26 @@ class ReportSynthesizerAgent:
             if threat_id and related_cve and related_cve in valid_cve_ids:
                 threat_cve_mappings.append(f"{threat_id} -> {related_cve}")
         
+        # Get CVE vulnerability classes
+        cve_classes = report_data.get('summary_stats', {}).get('cve_vulnerability_classes', {})
+        cve_classes_summary = "\n".join([f"  - {cls}: {len(cves)} CVEs" for cls, cves in cve_classes.items()]) if cve_classes else "  No CVE classes identified"
+        
+        # Get impact category breakdown
+        threats_by_impact = report_data.get('summary_stats', {}).get('threats_by_impact', {})
+        cves_by_impact = report_data.get('summary_stats', {}).get('cves_by_impact', {})
+        
+        impact_summary = []
+        for cat in ["Server Compromise", "Data Compromise", "Availability Impact", "User-Level Impact"]:
+            t_count = threats_by_impact.get(cat, 0)
+            c_count = cves_by_impact.get(cat, 0)
+            if t_count > 0 or c_count > 0:
+                impact_summary.append(f"  - {cat}: {t_count} threats, {c_count} CVEs")
+        impact_summary_str = "\n".join(impact_summary) if impact_summary else "  No impact categories assigned"
+        
+        # Get assumptions
+        all_assumptions = report_data.get('all_assumptions', [])
+        assumptions_str = "\n".join([f"  - {a}" for a in all_assumptions[:15]]) if all_assumptions else "  No explicit assumptions in data - infer reasonable defaults"
+        
         prompt = f"""Generate a comprehensive threat modeling report for the following analysis data.
 
 ## CRITICAL DATA INTEGRITY RULES:
@@ -412,15 +606,26 @@ class ReportSynthesizerAgent:
 ### VALID CVE IDs (ONLY these may appear in your report):
 {json.dumps(valid_cve_ids, indent=2) if valid_cve_ids else '[]  (No CVEs in input)'}
 
-### VALID THREAT-CVE MAPPINGS (ONLY these may appear in Section 7):
-{chr(10).join(threat_cve_mappings) if threat_cve_mappings else 'NONE - No threats have related_cve_id set. Section 7 should state: "No direct Threat-CVE correlations exist."'}
+### VALID THREAT-CVE MAPPINGS (ONLY these may appear in Section 8):
+{chr(10).join(threat_cve_mappings) if threat_cve_mappings else 'NONE - No threats have related_cve_id set. Section 8 should state: "No direct Threat-CVE correlations exist."'}
+
+### CVE VULNERABILITY CLASSES (Group CVEs by these classes in Section 7):
+{cve_classes_summary}
+
+### IMPACT CATEGORY BREAKDOWN (Use this for severity contextualization):
+{impact_summary_str}
+
+### DOCUMENTED ASSUMPTIONS (Include in Section 2 - Methodology and Assumptions):
+{assumptions_str}
 
 ### RULES:
 - You may ONLY use CVE IDs from the list above
 - You may ONLY create Threat-CVE rows for the mappings listed above
-- STRIDE threats WITHOUT related_cve_id must NOT appear in Section 7
+- STRIDE threats WITHOUT related_cve_id must NOT appear in Section 8
 - DO NOT invent conceptual or illustrative CVE mappings
-- If a threat description mentions a vulnerability type, do NOT map it to a random CVE
+- GROUP CVEs by vulnerability_class in Section 7, not as a flat list
+- Always distinguish impact categories when discussing severity
+- Include attack paths with step-by-step details in Section 9
 
 ## ANALYSIS DATA:
 
@@ -437,13 +642,17 @@ class ReportSynthesizerAgent:
 - Attack Paths: {report_data['summary_stats']['total_attack_paths']}
 - Critical CVEs: {report_data['summary_stats']['critical_cves']}
 - Actively Exploited: {report_data['summary_stats']['actively_exploited']}
+- Representative CVEs: {report_data['summary_stats'].get('representative_cves', 0)}
 
-Generate the complete 12-section Markdown report now. 
+Generate the complete 13-section Markdown report now. 
 
-FINAL REMINDER: 
-- Section 7 (Threat-CVE Matrix) must ONLY contain the {len(threat_cve_mappings)} valid mappings listed above
-- If zero valid mappings, state "No direct Threat-CVE correlations exist"
-- NEVER guess or infer CVE relationships"""
+FINAL REMINDERS: 
+1. Section 2 (Methodology and Assumptions) MUST document assumptions - this is critical for credibility
+2. Section 7 (CVE Discovery) MUST group CVEs by vulnerability_class, showing representative CVEs prominently
+3. Section 8 (Threat-CVE Matrix) must ONLY contain the {len(threat_cve_mappings)} valid mappings listed above
+4. Section 9 (Attack Paths) must include step-by-step attack narratives if attack_paths are provided
+5. Always contextualize severity with impact category (Server Compromise vs User-Level Impact)
+6. NEVER guess or infer CVE relationships"""
 
         return prompt
     

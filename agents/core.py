@@ -134,6 +134,122 @@ def print_complete(duration: float):
 # Attack Path Generation
 # =============================================================================
 
+def _generate_attack_path_name(
+    threats: List[ArchitecturalThreat],
+    referenced_cves: List[str],
+    all_cves: List[ThreatRecord]
+) -> str:
+    """
+    Generate a descriptive attack path name based on the threats and CVEs involved.
+    
+    Instead of generic names like "Generic Multi-Stage Attack", generate names like:
+    - "Reflected File Download → Path Traversal → Data Exfiltration"
+    - "Public-Facing Django CVEs Leading to Data Compromise"
+    - "Authentication Bypass to Privilege Escalation Chain"
+    """
+    if not threats and not referenced_cves:
+        return "Multi-Stage Application Attack"
+    
+    # Extract key attack types from threats
+    attack_types = []
+    for t in threats[:3]:  # Limit to first 3 threats
+        desc_lower = t.description.lower() if t.description else ""
+        
+        # Map to short attack names
+        if "deserialization" in desc_lower or "rce" in desc_lower or "remote code" in desc_lower:
+            attack_types.append("RCE")
+        elif "path traversal" in desc_lower or "directory traversal" in desc_lower:
+            attack_types.append("Path Traversal")
+        elif "reflected file download" in desc_lower or "rfd" in desc_lower:
+            attack_types.append("Reflected File Download")
+        elif "sql injection" in desc_lower:
+            attack_types.append("SQL Injection")
+        elif "xss" in desc_lower or "cross-site scripting" in desc_lower:
+            attack_types.append("XSS")
+        elif "authentication bypass" in desc_lower or "auth bypass" in desc_lower:
+            attack_types.append("Auth Bypass")
+        elif "privilege escalation" in desc_lower:
+            attack_types.append("Privilege Escalation")
+        elif "denial of service" in desc_lower or "dos" in desc_lower:
+            attack_types.append("DoS")
+        elif "information disclosure" in desc_lower:
+            attack_types.append("Info Disclosure")
+        elif "ssrf" in desc_lower:
+            attack_types.append("SSRF")
+        elif "csrf" in desc_lower:
+            attack_types.append("CSRF")
+    
+    # Also extract from CVE summaries
+    cve_map = {c.cve_id: c for c in all_cves}
+    for cve_id in referenced_cves[:2]:
+        if cve_id in cve_map:
+            cve = cve_map[cve_id]
+            summary_lower = cve.summary.lower() if cve.summary else ""
+            
+            if "path traversal" in summary_lower or "directory traversal" in summary_lower:
+                if "Path Traversal" not in attack_types:
+                    attack_types.append("Path Traversal")
+            elif "reflected file download" in summary_lower:
+                if "Reflected File Download" not in attack_types:
+                    attack_types.append("Reflected File Download")
+            elif "denial of service" in summary_lower:
+                if "DoS" not in attack_types:
+                    attack_types.append("DoS")
+    
+    # Generate name based on attack types
+    if len(attack_types) >= 2:
+        # Chain format: "Attack1 → Attack2 → Data Compromise"
+        return f"{attack_types[0]} → {attack_types[1]} → Data Compromise"
+    elif len(attack_types) == 1:
+        return f"{attack_types[0]} Leading to System Compromise"
+    elif referenced_cves:
+        # Fallback to CVE-based name
+        return f"CVE Exploitation Chain ({referenced_cves[0]})"
+    else:
+        return "Application Vulnerability Exploitation Chain"
+
+
+def _generate_attack_path_description(
+    threats: List[ArchitecturalThreat],
+    referenced_cves: List[str],
+    all_cves: List[ThreatRecord]
+) -> str:
+    """
+    Generate a descriptive attack path description based on the threats and CVEs.
+    """
+    cve_map = {c.cve_id: c for c in all_cves}
+    
+    # Build description based on what we have
+    parts = []
+    
+    if threats:
+        first_threat = threats[0]
+        parts.append(f"This attack path leverages {first_threat.category} vulnerabilities")
+        
+        if first_threat.affected_component:
+            parts.append(f"targeting {first_threat.affected_component}")
+    
+    if referenced_cves:
+        cve_names = []
+        for cve_id in referenced_cves[:2]:
+            if cve_id in cve_map:
+                cve = cve_map[cve_id]
+                # Extract short description
+                summary = cve.summary[:100] if cve.summary else cve_id
+                cve_names.append(f"{cve_id}")
+        
+        if cve_names:
+            parts.append(f"exploiting known vulnerabilities ({', '.join(cve_names)})")
+    
+    parts.append("to achieve initial access and escalate toward the attacker's objective.")
+    
+    if len(threats) >= 2:
+        second_threat = threats[1]
+        parts.append(f"The attack chains through {second_threat.affected_component} via {second_threat.category.lower()}.")
+    
+    return " ".join(parts) if parts else "A multi-stage attack leveraging identified vulnerabilities to progress from initial access to objective completion."
+
+
 def generate_attack_paths(
     threats: List[ArchitecturalThreat],
     cves: List[ThreatRecord],
@@ -604,6 +720,97 @@ def generate_attack_paths(
     elif len(architecture.components) >= 3 and is_kubernetes:
         # Generic supply chain - only for container environments
         pass  # Already handled above
+    
+    # ==========================================================================
+    # FALLBACK: Generic Application Attack Path (if no specific paths generated)
+    # ==========================================================================
+    if len(attack_paths) == 0 and len(architecture.components) >= 2:
+        # Generate a generic attack path based on available threats
+        steps = []
+        referenced_threats = []
+        referenced_cves = []
+        
+        # Find the most critical threats
+        critical_threats = [t for t in threats if t.severity in ["Critical", "High"]]
+        if not critical_threats:
+            critical_threats = threats[:3] if threats else []
+        
+        # Step 1: Reconnaissance
+        steps.append(AttackPathStep(
+            step_number=1,
+            action="Reconnaissance and enumeration of exposed services and APIs",
+            target_component=architecture.components[0].name if architecture.components else "External Interface",
+            technique="T1595 - Active Scanning",
+            outcome="Identify attack surface and potential entry points"
+        ))
+        
+        # Step 2: Initial access using first critical threat
+        if critical_threats:
+            first_threat = critical_threats[0]
+            steps.append(AttackPathStep(
+                step_number=2,
+                action=f"Exploit vulnerability: {first_threat.description[:60]}...",
+                target_component=first_threat.affected_component,
+                technique="T1190 - Exploit Public-Facing Application",
+                outcome="Gain initial foothold in the application"
+            ))
+            referenced_threats.append(first_threat.threat_id)
+        else:
+            steps.append(AttackPathStep(
+                step_number=2,
+                action="Attempt authentication bypass or credential stuffing",
+                target_component=architecture.components[0].name if architecture.components else "Application",
+                technique="T1110 - Brute Force",
+                outcome="Gain authenticated access"
+            ))
+        
+        # Step 3: Privilege escalation or lateral movement
+        if len(critical_threats) > 1:
+            second_threat = critical_threats[1]
+            steps.append(AttackPathStep(
+                step_number=3,
+                action=f"Escalate access: {second_threat.description[:60]}...",
+                target_component=second_threat.affected_component,
+                technique="T1068 - Exploitation for Privilege Escalation",
+                outcome="Gain elevated privileges or access to sensitive data"
+            ))
+            referenced_threats.append(second_threat.threat_id)
+        else:
+            steps.append(AttackPathStep(
+                step_number=3,
+                action="Enumerate internal resources and escalate privileges",
+                target_component="Internal Systems",
+                technique="T1087 - Account Discovery",
+                outcome="Identify high-value targets and escalation paths"
+            ))
+        
+        # Step 4: Objective
+        steps.append(AttackPathStep(
+            step_number=4,
+            action="Achieve attack objective (data exfiltration, persistence, or disruption)",
+            target_component="Target Data/Systems",
+            technique="T1005 - Data from Local System",
+            outcome="Complete compromise of targeted assets"
+        ))
+        
+        # Add CVEs if available
+        if cves:
+            referenced_cves = [c.cve_id for c in cves[:2]]
+        
+        # Generate descriptive attack path name based on threats and CVEs
+        attack_path_name = _generate_attack_path_name(critical_threats, referenced_cves, cves)
+        attack_path_description = _generate_attack_path_description(critical_threats, referenced_cves, cves)
+        
+        attack_paths.append(AttackPath(
+            path_id=f"AP-{path_id:02d}",
+            name=attack_path_name,
+            description=attack_path_description,
+            impact="Potential compromise of application data and functionality. Severity depends on the specific vulnerabilities exploited.",
+            likelihood="Medium" if critical_threats else "Low",
+            steps=steps,
+            referenced_threats=referenced_threats,
+            referenced_cves=referenced_cves
+        ))
     
     return attack_paths
 

@@ -193,6 +193,23 @@ class ThreatRecord(BaseModel):
         default=None,
         description="Justification for relevance or risk assessment"
     )
+    # New fields for improved CVE classification and presentation
+    vulnerability_class: Optional[str] = Field(
+        default=None,
+        description="Vulnerability class grouping (e.g., 'Input Parsing DoS', 'Template Engine Disclosure', 'Multipart Parser Abuse', 'Authentication Bypass', 'Deserialization RCE')"
+    )
+    impact_category: Optional[str] = Field(
+        default=None,
+        description="Impact category: 'Server Compromise' (RCE/full access), 'Data Compromise' (data theft/modification), 'Availability Impact' (DoS only), 'User-Level Impact' (XSS/CSRF/session theft)"
+    )
+    assumptions: List[str] = Field(
+        default_factory=list,
+        description="Explicit assumptions that must be true for this CVE to be exploitable (e.g., 'File uploads enabled', 'DEBUG=True in production', 'User input passed to template')"
+    )
+    is_representative: bool = Field(
+        default=False,
+        description="Whether this CVE is the representative example for its vulnerability class"
+    )
 
 
 # Alias for convenience
@@ -262,6 +279,19 @@ class ArchitecturalThreat(BaseModel):
     related_cve_id: Optional[str] = Field(
         default=None,
         description="Related CVE identifier if applicable"
+    )
+    # New fields for improved severity calibration
+    impact_category: Optional[str] = Field(
+        default=None,
+        description="Impact category for severity calibration: 'Server Compromise' (RCE, full system access), 'Data Compromise' (data theft, modification, PII exposure), 'Availability Impact' (DoS, resource exhaustion), 'User-Level Impact' (XSS, session hijacking, CSRF)"
+    )
+    assumptions: List[str] = Field(
+        default_factory=list,
+        description="Explicit assumptions required for this threat to be valid (e.g., 'Assuming default configuration', 'Assuming no WAF in place', 'Assuming file uploads enabled')"
+    )
+    attack_complexity: Optional[str] = Field(
+        default=None,
+        description="Attack complexity: 'Low' (no special conditions), 'Medium' (some conditions required), 'High' (many conditions/chained exploits)"
     )
 
 

@@ -58,6 +58,69 @@ Most CVEs do NOT apply to most systems. Your job is to filter noise, not amplify
 1. ONLY analyze CVEs provided in the input - NEVER invent CVE IDs
 2. When in doubt, mark as LOW or IRRELEVANT, not HIGH
 3. Prerequisites MUST factor into likelihood scoring
+4. Group similar CVEs into vulnerability classes - only keep 1-2 representative CVEs per class
+
+## VULNERABILITY CLASSIFICATION (Group similar CVEs):
+
+Assign each CVE to a vulnerability_class. Common classes:
+- "Input Parsing DoS" - ReDoS, multipart parser abuse, Accept-Language parsing, etc.
+- "Template Engine Disclosure" - Template filter misuse, dictsort, variable resolution
+- "Serialization RCE" - Unsafe deserialization, pickle, YAML attacks
+- "SQL Injection" - Any SQL injection variant
+- "Authentication Bypass" - Auth bypass, session issues
+- "Path Traversal" - Directory traversal, LFI
+- "SSRF" - Server-side request forgery
+- "XSS" - Cross-site scripting variants
+- "Privilege Escalation" - Priv esc, permission issues
+- "Memory Corruption" - Buffer overflows, use-after-free
+
+When you see multiple CVEs in the same class (e.g., 5 Django DoS CVEs):
+- Mark ONE as is_representative=true (the most severe or most exploitable)
+- Mark others as is_representative=false
+- They will be grouped in the report as "X additional CVEs in this class"
+
+## IMPACT CATEGORIZATION (Distinguish severity types):
+
+Assign each CVE an impact_category:
+
+1. "Server Compromise" (MOST SEVERE):
+   - Remote Code Execution
+   - Container/VM escape
+   - Full system takeover
+   - Example: Deserialization leading to RCE
+
+2. "Data Compromise" (SEVERE):
+   - Data exfiltration
+   - Database access
+   - PII exposure
+   - Credential theft
+   - Example: SQL injection, path traversal to sensitive files
+
+3. "Availability Impact" (MODERATE):
+   - Denial of Service
+   - Resource exhaustion
+   - Service disruption
+   - Example: ReDoS, infinite loops, memory exhaustion
+
+4. "User-Level Impact" (LOWER):
+   - Session hijacking
+   - Cookie theft
+   - CSRF
+   - Client-side attacks
+   - Example: XSS, clickjacking
+
+## EXPLICIT ASSUMPTIONS:
+
+For each CVE, provide assumptions array with conditions that must be true:
+- "File uploads enabled" / "File uploads disabled"
+- "DEBUG=True in production settings"
+- "User input passed directly to [function/filter]"
+- "Internationalized URLs (i18n_patterns) enabled"
+- "Windows deployment" / "Linux deployment"
+- "Internal network traffic unencrypted"
+- "No WAF/rate limiting in place"
+- "Vulnerable component version deployed"
+- "Feature X enabled (non-default)"
 
 ## RELEVANCE SCORING (Be strict):
 
@@ -92,36 +155,15 @@ ANY of these drops to LOW:
 - Requires physical access
 - CVE is disputed or rejected
 
-## LIKELIHOOD CALIBRATION:
-
-**High likelihood**: 
-- No authentication needed
-- Default ports exposed
-- No special configuration
-- Public exploit available
-
-**Medium likelihood** (most CVEs should be here):
-- Requires valid credentials
-- Requires specific query patterns
-- Requires enabled but non-default feature
-
-**Low likelihood**:
-- Requires admin credentials
-- Requires unusual configuration
-- Requires chained vulnerabilities
-- Theoretical with no public exploit
-
-## IMPORTANT: Prerequisites affect likelihood!
-
-Example: MariaDB CVE requiring specific storage engine + authenticated user + specific SQL query
-- Even if CVSS is 7.5, likelihood is LOW because prerequisites are significant
-- justification MUST explain why likelihood is low despite high CVSS
-
 ## OUTPUT:
 JSON with "assessments" array. Each assessment:
 - cve_id: EXACT ID from input
 - relevance_status: High/Medium/Low (no Irrelevant - just omit those)
-- prerequisites: Array of SPECIFIC requirements
+- vulnerability_class: Class name from list above
+- impact_category: One of Server Compromise/Data Compromise/Availability Impact/User-Level Impact
+- is_representative: true if this is the best example of its class, false otherwise
+- assumptions: Array of EXPLICIT conditions required for exploitation
+- prerequisites: Condensed requirements string
 - exploitability: RCE/DoS/Info Disclosure/Privilege Escalation/etc.
 - likelihood: High/Medium/Low with justification
 - justification: 2-3 sentences explaining relevance IN CONTEXT
@@ -171,6 +213,23 @@ class CVERelevanceAssessment(BaseModel):
         default_factory=list,
         description="Configuration changes to mitigate the vulnerability"
     )
+    # New fields for improved CVE classification
+    vulnerability_class: str = Field(
+        default="Unclassified",
+        description="Vulnerability class grouping (e.g., 'Input Parsing DoS', 'Serialization RCE')"
+    )
+    impact_category: str = Field(
+        default="Availability Impact",
+        description="Impact category: Server Compromise, Data Compromise, Availability Impact, User-Level Impact"
+    )
+    is_representative: bool = Field(
+        default=False,
+        description="Whether this CVE is the representative example for its vulnerability class"
+    )
+    assumptions: List[str] = Field(
+        default_factory=list,
+        description="Explicit assumptions required for this CVE to be exploitable"
+    )
 
 
 class ThreatRelevanceOutput(BaseModel):
@@ -206,9 +265,16 @@ def _create_relevance_schema() -> dict:
                         "configuration_fixes": {
                             "type": "array",
                             "items": {"type": "string"}
+                        },
+                        "vulnerability_class": {"type": "string"},
+                        "impact_category": {"type": "string"},
+                        "is_representative": {"type": "boolean"},
+                        "assumptions": {
+                            "type": "array",
+                            "items": {"type": "string"}
                         }
                     },
-                    "required": ["cve_id", "relevance_status", "justification"]
+                    "required": ["cve_id", "relevance_status", "justification", "vulnerability_class", "impact_category"]
                 }
             }
         },
@@ -396,6 +462,12 @@ Return only RELEVANT CVEs in the assessments array."""
                 cve.likelihood = assessment.likelihood
                 cve.justification = assessment.justification
                 
+                # Apply new classification fields
+                cve.vulnerability_class = assessment.vulnerability_class
+                cve.impact_category = assessment.impact_category
+                cve.is_representative = assessment.is_representative
+                cve.assumptions = assessment.assumptions
+                
                 relevant_cves.append(cve)
         
         return relevant_cves
@@ -497,6 +569,23 @@ Return only RELEVANT CVEs in the assessments array."""
             else:
                 preconditions.append("Network access to vulnerable component")
             
+            # Get assumptions from CVE
+            threat_assumptions = []
+            if hasattr(cve, 'assumptions') and cve.assumptions:
+                threat_assumptions = cve.assumptions
+            
+            # Get impact category from CVE
+            impact_cat = getattr(cve, 'impact_category', None) or "Server Compromise"
+            
+            # Determine attack complexity
+            attack_complexity = "Low"
+            if hasattr(cve, 'prerequisites') and cve.prerequisites:
+                prereq_lower = cve.prerequisites.lower()
+                if "authenticated" in prereq_lower or "admin" in prereq_lower:
+                    attack_complexity = "Medium"
+                if "chain" in prereq_lower or "multiple" in prereq_lower:
+                    attack_complexity = "High"
+            
             # Create threat
             threat = ArchitecturalThreat(
                 threat_id=f"T-{next_id:03d}",
@@ -508,7 +597,10 @@ Return only RELEVANT CVEs in the assessments array."""
                 preconditions=preconditions,
                 impact=f"Successful exploitation could lead to {cve.exploitability if hasattr(cve, 'exploitability') and cve.exploitability else 'system compromise'}",
                 cwe_id=cve.cwe_id,
-                related_cve_id=cve.cve_id
+                related_cve_id=cve.cve_id,
+                impact_category=impact_cat,
+                assumptions=threat_assumptions,
+                attack_complexity=attack_complexity
             )
             
             promoted_threats.append(threat)
@@ -605,6 +697,159 @@ Return only RELEVANT CVEs in the assessments array."""
                 inferred_components, generic_threats, cve_threats
             )
     
+    def _classify_cve_heuristic(self, cve: ThreatRecord) -> tuple:
+        """
+        Heuristically classify a CVE into vulnerability class and impact category.
+        
+        Returns:
+            Tuple of (vulnerability_class, impact_category)
+        """
+        summary_lower = cve.summary.lower() if cve.summary else ""
+        cwe = cve.cwe_id or ""
+        
+        # Determine vulnerability class based on summary and CWE
+        vulnerability_class = "Unclassified"
+        impact_category = "Availability Impact"  # Default
+        
+        # RCE / Serialization
+        if any(x in summary_lower for x in ["remote code execution", "deserialization", "pickle", "yaml", "arbitrary code"]):
+            vulnerability_class = "Serialization RCE"
+            impact_category = "Server Compromise"
+        elif "rce" in summary_lower or cwe in ["CWE-502", "CWE-94"]:
+            vulnerability_class = "Code Execution"
+            impact_category = "Server Compromise"
+        # DoS patterns
+        elif any(x in summary_lower for x in ["denial of service", "redos", "regular expression", "infinite loop", "memory exhaustion", "resource exhaustion"]):
+            vulnerability_class = "Input Parsing DoS"
+            impact_category = "Availability Impact"
+        elif any(x in summary_lower for x in ["multipart", "accept-language", "parsing"]) and "dos" in summary_lower:
+            vulnerability_class = "Input Parsing DoS"
+            impact_category = "Availability Impact"
+        # SQL Injection
+        elif "sql injection" in summary_lower or cwe == "CWE-89":
+            vulnerability_class = "SQL Injection"
+            impact_category = "Data Compromise"
+        # Path Traversal
+        elif any(x in summary_lower for x in ["path traversal", "directory traversal", "lfi", "local file"]) or cwe == "CWE-22":
+            vulnerability_class = "Path Traversal"
+            impact_category = "Data Compromise"
+        # XSS
+        elif "cross-site scripting" in summary_lower or "xss" in summary_lower or cwe == "CWE-79":
+            vulnerability_class = "XSS"
+            impact_category = "User-Level Impact"
+        # SSRF
+        elif "ssrf" in summary_lower or "server-side request" in summary_lower or cwe == "CWE-918":
+            vulnerability_class = "SSRF"
+            impact_category = "Data Compromise"
+        # Auth bypass
+        elif any(x in summary_lower for x in ["authentication bypass", "access control", "authorization"]) or cwe in ["CWE-287", "CWE-306"]:
+            vulnerability_class = "Authentication Bypass"
+            impact_category = "Data Compromise"
+        # Privilege escalation
+        elif any(x in summary_lower for x in ["privilege escalation", "privilege elevation"]):
+            vulnerability_class = "Privilege Escalation"
+            impact_category = "Server Compromise"
+        # Information disclosure
+        elif "information disclosure" in summary_lower or cwe in ["CWE-200", "CWE-209"]:
+            vulnerability_class = "Information Disclosure"
+            impact_category = "Data Compromise"
+        # Template issues
+        elif any(x in summary_lower for x in ["template", "dictsort", "variable resolution"]):
+            vulnerability_class = "Template Engine Disclosure"
+            impact_category = "Data Compromise"
+        # Memory corruption
+        elif any(x in summary_lower for x in ["buffer overflow", "memory corruption", "heap", "stack"]):
+            vulnerability_class = "Memory Corruption"
+            impact_category = "Server Compromise"
+        
+        return vulnerability_class, impact_category
+    
+    def _generate_assumptions_heuristic(self, cve: ThreatRecord) -> List[str]:
+        """Generate assumptions based on CVE content."""
+        assumptions = []
+        summary_lower = cve.summary.lower() if cve.summary else ""
+        
+        # File upload related
+        if any(x in summary_lower for x in ["upload", "multipart", "file"]):
+            assumptions.append("File uploads enabled on the application")
+        
+        # Template related
+        if any(x in summary_lower for x in ["template", "dictsort"]):
+            assumptions.append("User input passed to template filters")
+        
+        # i18n related
+        if any(x in summary_lower for x in ["i18n", "locale", "language", "internationalized"]):
+            assumptions.append("Internationalized URLs (i18n_patterns) enabled")
+        
+        # Windows specific
+        if "windows" in summary_lower:
+            assumptions.append("Windows deployment environment")
+        
+        # Version specific
+        if "before" in summary_lower:
+            assumptions.append("Vulnerable version of component deployed (check version)")
+        
+        # Auth required - QUALIFY STRONG ASSUMPTIONS
+        if any(x in summary_lower for x in ["authenticated", "authentication required"]):
+            assumptions.append("Attacker has valid user credentials (via phishing, credential stuffing, or prior compromise)")
+        
+        # Database privilege requirements - ALWAYS QUALIFY THESE
+        if any(x in summary_lower for x in ["sql", "database", "postgresql", "mysql", "query"]):
+            if any(x in summary_lower for x in ["authenticated", "privilege", "permission", "admin", "create"]):
+                # Qualify the assumption - don't assume god-mode
+                assumptions.append("Attacker can gain database access via application-layer vulnerabilities (e.g., SQL Injection, compromised app credentials, or misconfigured connection pooling)")
+        
+        # Privilege escalation context - qualify how privileges were obtained
+        if any(x in summary_lower for x in ["privilege escalation", "elevation of privilege"]):
+            assumptions.append("Initial access obtained via separate vulnerability or compromised credentials")
+        
+        # Network access assumptions
+        if any(x in summary_lower for x in ["remote", "network", "http"]):
+            assumptions.append("Target service is network-accessible to the attacker")
+        
+        # Add a default if no specific assumptions
+        if not assumptions:
+            assumptions.append("Component is exposed and reachable")
+            assumptions.append("Default configuration in use")
+        
+        return assumptions
+    
+    def _qualify_dangerous_assumptions(self, assumptions: List[str]) -> List[str]:
+        """
+        Review assumptions and qualify any that are too strong without justification.
+        
+        This prevents credibility issues where assumptions imply god-mode access.
+        """
+        qualified = []
+        
+        # Patterns that need qualification
+        dangerous_patterns = {
+            # Original assumption pattern -> Qualified version
+            "attacker has sql": "Attacker can gain SQL execution privileges via application-layer vulnerabilities (e.g., SQL Injection or compromised application credentials)",
+            "attacker has database": "Attacker can access the database via application-layer vulnerabilities or misconfigured access controls",
+            "attacker has admin": "Attacker can obtain admin privileges via privilege escalation or compromised admin credentials",
+            "attacker has root": "Attacker can obtain root access via privilege escalation from initial foothold",
+            "attacker has shell": "Attacker can obtain shell access via RCE vulnerability or compromised credentials",
+            "attacker can execute": "Attacker can achieve code execution via identified vulnerabilities in the application layer",
+        }
+        
+        for assumption in assumptions:
+            assumption_lower = assumption.lower()
+            was_qualified = False
+            
+            for pattern, qualified_version in dangerous_patterns.items():
+                if pattern in assumption_lower:
+                    # Check if already qualified (contains "via" or "through")
+                    if " via " not in assumption_lower and " through " not in assumption_lower:
+                        qualified.append(qualified_version)
+                        was_qualified = True
+                        break
+            
+            if not was_qualified:
+                qualified.append(assumption)
+        
+        return qualified
+    
     def _heuristic_relevance_filter(
         self,
         inferred_components: List[Dict[str, Any]],
@@ -642,6 +887,9 @@ Return only RELEVANT CVEs in the assessments array."""
         
         # Filter CVEs by keyword matching
         relevant_cves = []
+        class_counts: Dict[str, int] = {}  # Track CVEs per class
+        class_representatives: Dict[str, ThreatRecord] = {}  # Best CVE per class
+        
         for cve in cve_threats:
             # Check if CVE matches any component
             cve_text = f"{cve.affected_products} {cve.summary}".lower()
@@ -657,14 +905,49 @@ Return only RELEVANT CVEs in the assessments array."""
                 is_relevant = True
             
             if is_relevant:
+                # Classify CVE
+                vuln_class, impact_cat = self._classify_cve_heuristic(cve)
+                assumptions = self._generate_assumptions_heuristic(cve)
+                # Qualify any dangerous assumptions that imply god-mode
+                assumptions = self._qualify_dangerous_assumptions(assumptions)
+                
                 # Add heuristic assessment
                 cve.relevance_status = "Medium"  # Default for heuristic
                 cve.prerequisites = "Network access to vulnerable component"
                 cve.exploitability = "See CVE description"
                 cve.likelihood = "Medium"
                 cve.justification = f"Matches architecture component keyword"
+                cve.vulnerability_class = vuln_class
+                cve.impact_category = impact_cat
+                cve.assumptions = assumptions
+                
+                # Track for representative selection
+                class_counts[vuln_class] = class_counts.get(vuln_class, 0) + 1
+                
+                # Select representative (highest CVSS or actively exploited)
+                current_rep = class_representatives.get(vuln_class)
+                if current_rep is None:
+                    class_representatives[vuln_class] = cve
+                    cve.is_representative = True
+                else:
+                    # Compare - prefer KEV, then higher CVSS
+                    current_score = current_rep.cvss_score or 0
+                    new_score = cve.cvss_score or 0
+                    if cve.is_actively_exploited and not current_rep.is_actively_exploited:
+                        current_rep.is_representative = False
+                        cve.is_representative = True
+                        class_representatives[vuln_class] = cve
+                    elif new_score > current_score and not current_rep.is_actively_exploited:
+                        current_rep.is_representative = False
+                        cve.is_representative = True
+                        class_representatives[vuln_class] = cve
+                    else:
+                        cve.is_representative = False
                 
                 relevant_cves.append(cve)
+        
+        # Log class distribution
+        logger.info(f"CVE vulnerability classes: {class_counts}")
         
         # Promote critical CVEs
         enriched_threats = self._promote_critical_cves_to_threats(
