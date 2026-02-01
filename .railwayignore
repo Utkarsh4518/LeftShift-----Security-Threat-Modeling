@@ -1,0 +1,39 @@
+# Frontend files (deployed separately on Vercel)
+frontend/
+node_modules/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Test files
+tests/
+*.md
+!README.md
+
+# Threat reports
+threat_report_*.md
+
+# Data files (examples only, not needed in production)
+data/

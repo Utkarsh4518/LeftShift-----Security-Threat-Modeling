@@ -11,7 +11,15 @@
 import type { SentinelAnalysisResult, AnalysisInput } from '../compiler/types';
 
 /** API configuration */
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+// In production (Vercel), use Railway backend URL from environment variable
+// In development, use localhost or configured URL
+const getApiBaseUrl = (): string => {
+  // Always use VITE_API_BASE_URL if set (for Railway backend)
+  // Otherwise fall back to localhost for development
+  return import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+};
+
+const API_BASE_URL = getApiBaseUrl();
 const ANALYZE_ENDPOINT = '/analyze';
 
 /** Polling configuration for async analysis */
