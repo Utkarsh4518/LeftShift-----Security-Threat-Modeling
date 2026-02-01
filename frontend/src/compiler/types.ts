@@ -145,6 +145,8 @@ export interface RenderEdge {
   collapsedCount?: number;
   /** Index for staggering overlapping edges */
   edgeIndex?: number;
+  /** Total number of edges between the same source/target pair (for staggering) */
+  totalEdgesInPair?: number;
   /** True if edge spans non-adjacent domains (distance > 1) */
   isLongRange?: boolean;
   /** Routing direction for long-range edges through backbone */
@@ -232,6 +234,8 @@ export interface PositionedEdge {
       topY: number;
       bottomY: number;
     };
+    /** Total number of edges between the same source/target pair (for staggering) */
+    totalEdgesInPair?: number;
   };
   animated?: boolean;
 }
