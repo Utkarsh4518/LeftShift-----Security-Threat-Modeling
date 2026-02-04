@@ -10,8 +10,26 @@ Uses Google Gemini for STRIDE analysis and threat generation.
 import json
 import logging
 import os
+import re
 import time
 from typing import Any, Dict, List, Optional
+
+
+def _parse_first_json(text: str) -> Optional[Dict[str, Any]]:
+    """Parse the first JSON object from LLM response; ignores trailing text (avoids 'Extra data' errors)."""
+    if not text or not text.strip():
+        return None
+    text = text.strip()
+    # Strip optional markdown code fence
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text).strip()
+    try:
+        decoder = json.JSONDecoder()
+        obj, _ = decoder.raw_decode(text)
+        return obj if isinstance(obj, dict) else None
+    except (json.JSONDecodeError, ValueError):
+        return None
 
 from dotenv import load_dotenv
 from google import genai
@@ -553,9 +571,11 @@ Return a JSON object with "corrections" array containing only items that need up
             logger.warning("CWE validation failed - keeping original mappings")
             return threats
         
-        # Parse and apply corrections
+        # Parse and apply corrections (use first JSON only; LLM may append extra text)
         try:
-            data = json.loads(response_text)
+            data = _parse_first_json(response_text)
+            if data is None:
+                raise ValueError("No valid JSON in response")
             validation = CWEValidationOutput.model_validate(data)
             
             # Build correction map
@@ -617,9 +637,11 @@ Return a JSON object with "corrections" array containing only items that need up
             logger.error("Threat generation failed - using fallback")
             return self._generate_fallback_threats(inferred_components, architecture)
         
-        # Parse response
+        # Parse response (use first JSON only; LLM may append extra text)
         try:
-            data = json.loads(response_text)
+            data = _parse_first_json(response_text)
+            if data is None:
+                raise ValueError("No valid JSON in response")
             output = ThreatKnowledgeOutput.model_validate(data)
             
             logger.info(

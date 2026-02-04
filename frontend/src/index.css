@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Keep severity highlight classes in production (ComponentNode, DomainContainer use them dynamically) */
+@source "./safelist-severity.txt";
+
 /* Custom styles for React Flow */
 .react-flow__node {
   cursor: pointer;
