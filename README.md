@@ -16,6 +16,7 @@
 - [Technology Stack](#technology-stack)
 - [Installation](#installation)
 - [Usage](#usage)
+- [Deployment](#deployment)
 - [Project Structure](#project-structure)
 - [Team](#team)
 - [License](#license)
@@ -476,6 +477,33 @@ report, results = run_threat_modeling_pipeline(
     use_langgraph=False
 )
 ```
+
+---
+
+## Deployment
+
+**Recommended:** Backend on **Render**, frontend on **Vercel**. The app has two parts: **frontend** (Vite/React) and **backend** (FastAPI). Deploy the frontend to Vercel and the backend to Render (or one of the alternatives below). Then set the frontend’s API URL to your backend URL.
+
+### Backend (API) – choose one
+
+| Option | Best for | Notes |
+|--------|----------|--------|
+| **Render** | Free hosted API (recommended) | Use the repo’s `render.yaml` or create a Web Service: **Build** `pip install -r requirements.txt`, **Start** `uvicorn api_server:app --host 0.0.0.0 --port $PORT`. Set `GEMINI_API_KEY` in the Render dashboard. |
+| **Fly.io** | Free tier, global | `fly launch` in the repo root, then set **Build**: `pip install -r requirements.txt`, **Start**: `uvicorn api_server:app --host 0.0.0.0 --port 8080`. Add `GEMINI_API_KEY` as a secret. |
+| **Local + tunnel** | Demos, no new account | Run the API locally (`python -m uvicorn api_server:app --reload`), then expose it with [ngrok](https://ngrok.com/) or [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/). Use the tunnel URL as the frontend’s API base. |
+
+### Frontend (Vercel)
+
+- Deploy the repo to Vercel; use **Root Directory** `frontend` or keep root and set **Build Command** to `cd frontend && npm install && npm run build`, **Output Directory** to `frontend/dist` (the repo's `vercel.json` already does this).
+- In the Vercel project, add an environment variable:
+  - **Name:** `VITE_API_BASE_URL`
+  - **Value:** your backend URL (e.g. `https://leftshift-api.onrender.com`), **no trailing slash**.
+- Redeploy so the build picks up the variable. The app will call your backend for analyses. Preview deployments work as long as the backend allows Vercel origins (the API CORS setup includes Vercel production and preview domains).
+
+### Quick local demo (no deploy)
+
+- Terminal 1: `pip install -r requirements.txt && python -m uvicorn api_server:app --reload` (API on port 8000).
+- Terminal 2: `cd frontend && npm run dev` (frontend on port 5173; it uses `http://localhost:8000` when `VITE_API_BASE_URL` is not set).
 
 ---
 

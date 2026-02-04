@@ -11,10 +11,10 @@
 import type { SentinelAnalysisResult, AnalysisInput } from '../compiler/types';
 
 /** API configuration */
-// In production (Vercel), use Railway backend URL from environment variable
+// In production (Vercel), use Render backend URL from environment variable
 // In development, use localhost or configured URL
 function getApiBaseUrlInternal(): string {
-  // Always use VITE_API_BASE_URL if set (for Railway backend)
+  // Always use VITE_API_BASE_URL if set (for Render backend)
   // Otherwise fall back to localhost for development
   return import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 }
@@ -45,6 +45,10 @@ interface AnalysisResponse {
 export async function analyzeArchitecture(
   input: AnalysisInput
 ): Promise<SentinelAnalysisResult> {
+  // #region agent log
+  const fullUrl = `${API_BASE_URL}${ANALYZE_ENDPOINT}`;
+  fetch('http://127.0.0.1:7242/ingest/5b6b6abc-8724-4f4c-b306-ebb9d08f709a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'analysisService.ts:analyzeArchitecture',message:'request URL and env',data:{apiBaseUrl:API_BASE_URL,fullUrl,envSet:!!(import.meta as unknown as { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL,inputType:input.type},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+  // #endregion
   const formData = new FormData();
 
   if (input.type === 'image' && input.file) {
@@ -57,13 +61,25 @@ export async function analyzeArchitecture(
     throw new Error('Invalid input: must provide file, JSON, or example ID');
   }
 
-  const response = await fetch(`${API_BASE_URL}${ANALYZE_ENDPOINT}`, {
-    method: 'POST',
-    body: formData,
-  });
+  let response: Response;
+  try {
+    response = await fetch(fullUrl, {
+      method: 'POST',
+      body: formData,
+    });
+  } catch (err) {
+    // #region agent log
+    const e = err as Error;
+    fetch('http://127.0.0.1:7242/ingest/5b6b6abc-8724-4f4c-b306-ebb9d08f709a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'analysisService.ts:fetch catch',message:'fetch threw',data:{message:e?.message,name:e?.name,cause:String(e?.cause ?? '')},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{});
+    // #endregion
+    throw err;
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/5b6b6abc-8724-4f4c-b306-ebb9d08f709a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'analysisService.ts:!response.ok',message:'backend returned error',data:{status:response.status,statusText:response.statusText,errorTextSlice:errorText.slice(0,200)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H4'})}).catch(()=>{});
+    // #endregion
     throw new Error(`Analysis failed: ${response.status} - ${errorText}`);
   }
 

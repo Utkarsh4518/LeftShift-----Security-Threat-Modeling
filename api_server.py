@@ -35,7 +35,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Enable CORS for frontend (allow multiple ports for dev, Vercel, and Railway domains)
+# Enable CORS for frontend (allow multiple ports for dev, Vercel, and Render)
 # Get allowed origins from environment or use defaults
 allowed_origins = [
     "http://localhost:5173",
@@ -52,31 +52,23 @@ allowed_origins = [
     "http://127.0.0.1:5178",
 ]
 
-# Add Vercel domains (production and preview)
+# Add Vercel deployment URL when running on Vercel (server-side env)
 vercel_url = os.getenv("VERCEL_URL")
 if vercel_url:
     allowed_origins.append(f"https://{vercel_url}")
 
-# Add frontend URL from environment (for Railway deployment)
+# Optional explicit frontend URL (e.g. production Vercel app)
 frontend_url = os.getenv("FRONTEND_URL")
 if frontend_url:
     allowed_origins.append(frontend_url)
 
-# Add common Vercel preview patterns
-allowed_origins.extend([
-    "https://*.vercel.app",
-    "https://*.vercel.sh",
-])
-
-# Add Railway domains (Railway provides *.railway.app domains)
-allowed_origins.extend([
-    "https://*.railway.app",
-    "https://*.up.railway.app",
-])
+# Regex so all Vercel production and preview origins are allowed (browser sends exact origin)
+allow_origin_regex = r"^https://(.*\.vercel\.app|.*\.vercel\.sh)$"
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
+    allow_origin_regex=allow_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -88,6 +80,17 @@ class AnalysisResponse(BaseModel):
     status: str
     result: Optional[dict] = None
     error: Optional[str] = None
+
+
+@app.get("/")
+async def root():
+    """Root route so API URL does not return 404."""
+    return {
+        "service": "Left<<Shift API",
+        "docs": "/docs",
+        "health": "/health",
+        "analyze": "POST /analyze",
+    }
 
 
 @app.get("/health")

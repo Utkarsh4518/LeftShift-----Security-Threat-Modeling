@@ -135,6 +135,9 @@ export function useAnalysis(): UseAnalysisResult {
       } catch (error) {
         cancelledRef.current = true;
         const message = error instanceof Error ? error.message : 'Analysis failed';
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/5b6b6abc-8724-4f4c-b306-ebb9d08f709a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useAnalysis.ts:analyze catch',message:'error shown in UI',data:{message},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+        // #endregion
         setState({ status: 'error', error: message });
         console.error('Analysis error:', error);
       }
