@@ -35,5 +35,5 @@ tests/
 # Threat reports
 threat_report_*.md
 
-# Data files (examples only, not needed in production)
-data/
+# Data files: keep data/ so example_id (ecommerce, k8s-platform) works in production
+# data/
